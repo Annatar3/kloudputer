@@ -21,6 +21,11 @@
 #include "ui.h"
 #include "voice.h"
 
+// The loop task runs every TLS handshake. From the agent screen, voice upload sits ~7 calls deep (menu, agents,
+// agent screen, voice, Groq, TLS) and overflowed the default 8 KB stack. /info shows the measured headroom.
+constexpr size_t kLoopStack = 16 * 1024;
+size_t getArduinoLoopTaskStackSize() { return kLoopStack; }
+
 namespace {
 constexpr const char* kVersion = "v1.7";
 constexpr float kSilentRms = 20;  // clip RMS (around its mean) below this is treated as silence
@@ -648,6 +653,8 @@ void showInfo() {
            ui::DIM);
   view.add("heap " + String(ESP.getFreeHeap()) + "  max block " + String(ESP.getMaxAllocHeap()), ui::DIM);
   view.add("last restart: " + resetReason(), ui::DIM);
+  view.add("loop stack: " + String(uxTaskGetStackHighWaterMark(nullptr)) + " of " + String(kLoopStack) +
+               " bytes never used", ui::DIM);
   const int battery = M5.Power.getBatteryLevel();
   view.add(battery < 0 ? "battery: no reading on this board (" + String(battery) + ")"
                        : "battery " + String(battery) + "%  " + String(M5.Power.getBatteryVoltage()) + " mV",
