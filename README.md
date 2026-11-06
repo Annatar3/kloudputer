@@ -15,8 +15,10 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 - **Setup from your phone.** Scan a QR code, and a setup page opens where you paste your keys and pick Wi-Fi.
   Tested on iPhone and Android.
 - **A menu for everything.** Press Tab for voice, volume, model, Wi-Fi, sessions and device info.
-- **Agents (in progress).** Send tasks to your own Claude Code agent and get its report back, end-to-end
-  encrypted.
+- **Agents (beta).** Pair the Cardputer with your own Claude Code agent, send it tasks by text or voice, and
+  watch its progress and report. The traffic goes end-to-end encrypted through an ntfy relay (ntfy.sh, or your own).
+  The agent side is one Node file with no dependencies. See [connector/README.md](connector/README.md) and the
+  [protocol](connector/PROTOCOL.md).
 
 ## What you need
 
@@ -41,7 +43,9 @@ The M5Burner listing is coming soon. Until then:
 3. Pick your home Wi-Fi and paste your keys. Your time zone is filled in from the phone. Save.
 4. The Cardputer joins your Wi-Fi and checks the keys, using a free "list models" request so nothing is billed.
 
-You can open setup again from the menu at any time (Tab, then **Setup from phone**).
+You can open setup again from the menu at any time (Tab, then **Setup from phone**). Keys can also come from
+`/keys.txt` (`ANTHROPIC_API_KEY=...`) or `/kloudputer/config.txt` on the SD card, but keys set from the phone take
+priority. Saved chats live in `/kloudputer/sessions/`.
 
 ## Keys
 

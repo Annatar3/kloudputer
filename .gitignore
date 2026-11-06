@@ -1,0 +1,11 @@
+# Build output
+.pio/
+.vscode/
+node_modules/
+dist/
+
+# Private working notes and anything that could hold a secret
+todo.md
+*.secret
+*.env
+cardputer-state.json

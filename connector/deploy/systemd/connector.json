@@ -1,0 +1,12 @@
+{
+  "relay": "https://ntfy.sh",
+  "secretFile": "/etc/kloudputer/connector.secret",
+  "name": "My agent",
+  "cwd": "/srv/agent/workspace",
+  "command": ["/usr/local/bin/claude", "-p", "--output-format", "stream-json", "--verbose", "--", "{prompt}"],
+  "env": {
+    "PATH": "/usr/local/bin:/usr/bin:/bin"
+  },
+  "maxJobSecs": 900,
+  "stateFile": "/var/lib/kloudputer/state.json"
+}

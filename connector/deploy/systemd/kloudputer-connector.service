@@ -1,0 +1,58 @@
+[Unit]
+# Lets a paired Cardputer give tasks to the Claude Code agent on this host, one at a time.
+#
+# Adapt before installing:
+#   - User=, Group=, HOME and /srv/agent: the account and directory the agent works in.
+#   - The node and connector paths in ExecStart=.
+#   - /etc/kloudputer/agent.env: the agent's credentials, for example CLAUDE_CODE_OAUTH_TOKEN from
+#     `claude setup-token`. Keep that file and the pairing secret mode 600, owned by User=.
+#   - ProtectHome=yes hides /home and /root. Drop it if the agent's files live under /home.
+#   - MemoryMax= and friends: size them to the host, and leave room for whatever else runs on it.
+Description=Kloudputer connector (Cardputer tasks for the local Claude Code agent)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=agent
+Group=agent
+WorkingDirectory=/srv/agent/workspace
+EnvironmentFile=-/etc/kloudputer/agent.env
+Environment=HOME=/srv/agent
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Writable at /var/lib/kloudputer even though ProtectSystem= below makes most of the disk read-only.
+StateDirectory=kloudputer
+ExecStart=/usr/bin/node /usr/local/lib/kloudputer/kloudputer-connector.mjs run --config /etc/kloudputer/connector.json
+
+Restart=always
+RestartSec=20
+# SIGTERM to the connector alone, so it can stop the running job and tell the Cardputer before going
+# offline. Whatever is left in the cgroup afterwards still gets SIGKILL.
+KillMode=mixed
+
+# One job runs at a time, so these cover one `claude -p` plus the tools it starts.
+MemoryHigh=512M
+MemoryMax=768M
+TasksMax=256
+# The connector survives an OOM-killed job and reports the failure; MemoryMax still bounds the unit.
+OOMPolicy=continue
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/srv/agent
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kloudputer-connector
+
+[Install]
+WantedBy=multi-user.target

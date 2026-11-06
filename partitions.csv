@@ -1,0 +1,8 @@
+# Pocket Claude partition table — 8 MB flash
+# app0 ~3.1 MB (firmware), spiffs ~4.6 MB LittleFS (audio /rec.pcm), coredump 64 KB.
+# Name,     Type, SubType,  Offset,    Size
+nvs,        data, nvs,      0x9000,    0x5000
+otadata,    data, ota,      0xe000,    0x2000
+app0,       app,  ota_0,    0x10000,   0x330000
+spiffs,     data, spiffs,   0x340000,  0x4A0000
+coredump,   data, coredump, 0x7E0000,  0x10000
