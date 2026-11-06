@@ -1243,6 +1243,7 @@ void setup() {
   display.setRotation(1);
   header.begin(display);
   view.begin(display);
+  agentView.begin(display);
   menu.begin(display);
   ui::splash(display, kVersion);
 
