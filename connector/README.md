@@ -25,14 +25,19 @@ The pairing code is the secret. Anyone holding it can give this agent tasks, so 
 
 The firmware talks to Anthropic with an API key. A Pro/Max plan can't be used that way: Anthropic only allows
 those logins inside Claude Code and claude.ai. The connector runs the real `claude` CLI, so it can use your
-plan, and the Cardputer chats with it as an agent.
+plan, and the Cardputer chats with it.
 
-1. On the PC: `claude` once and `/login` with your Pro account. Make the folder `deploy/chat.json` names as `cwd`.
-2. `node kloudputer-connector.mjs pair --secret chat.secret`, then `node kloudputer-connector.mjs run --config deploy/chat.json`.
-3. On the Cardputer, paste the code in setup (an API key is no longer required once an agent is paired), then Tab > Agents.
+1. On a PC where Claude Code is installed and logged in (`claude`, then `/login`), download this one file and run it:
+   ```sh
+   curl -fsSLO https://raw.githubusercontent.com/rishabharora-kk/kloudputer/claude-pro-via-connector/connector/kloudputer-connector.mjs
+   node kloudputer-connector.mjs chat
+   ```
+   It creates its own secret and workspace in `~/.kloudputer`, prints a pairing code, and keeps running.
+2. On the Cardputer's phone setup page, paste that code under **Use your Claude Pro plan** instead of an API key.
+3. Type on the Cardputer as usual. With no API key, your messages go to Claude through that PC.
 
-`deploy/chat.json` uses `--continue`, so replies keep the conversation going in that folder, and `--tools ""`, so chat
-cannot run commands. Replies come after the whole answer is ready, not word by word. The PC must stay on.
+Chat keeps its conversation (`--continue`) and cannot run tools (`--tools ""`). Replies arrive whole, not word by
+word, and the PC has to stay on. For a custom setup, use `deploy/chat.json` with `run --config`.
 
 ## Configuration
 

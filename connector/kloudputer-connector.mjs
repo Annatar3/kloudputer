@@ -3,8 +3,9 @@
 // Protocol: PROTOCOL.md (v1). Node 18.3+ standard library only.
 import { spawn } from 'node:child_process';
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
-import { closeSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -591,7 +592,8 @@ export class Connector {
 // ---------------------------------------------------------------- boundary: files and CLI
 
 export function readSecret(file) {
-  if (statSync(file).mode & 0o077) throw new Error(`${file} is readable by other users; chmod 600 it`);
+  // Windows reports every file as 0o666, so the mode check only means something elsewhere.
+  if (process.platform !== 'win32' && statSync(file).mode & 0o077) throw new Error(`${file} is readable by other users; chmod 600 it`);
   const secret = readFileSync(file);
   if (secret.length !== 32) throw new Error(`${file} is not a 32-byte secret`);
   return secret;
@@ -650,10 +652,13 @@ export function loadConfig(file) {
   };
 }
 
+const CHAT_PROMPT = 'You are replying on a 40-column Cardputer screen. Be concise, plain ASCII, no markdown or emoji.';
+
 const USAGE = `usage:
   kloudputer-connector.mjs pair --secret <file> [--force]   create the secret and print the pairing code
   kloudputer-connector.mjs code --secret <file>             print the pairing code again
-  kloudputer-connector.mjs run --config <file.json>         serve the paired Cardputer`;
+  kloudputer-connector.mjs run --config <file.json>         serve the paired Cardputer
+  kloudputer-connector.mjs chat                              zero-setup chat through the logged-in claude CLI`;
 
 export async function main(args) {
   const { positionals, values } = parseArgs({
@@ -676,6 +681,25 @@ export async function main(args) {
       return;
     case 'run': {
       const connector = new Connector(loadConfig(need('config')));
+      for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => connector.stop());
+      await connector.start();
+      return;
+    }
+    case 'chat': {
+      // Zero-config chat: the logged-in claude CLI (for example a Claude Pro login) answers the Cardputer.
+      const dir = join(homedir(), '.kloudputer');
+      mkdirSync(join(dir, 'workspace'), { recursive: true });
+      const secretFile = join(dir, 'chat.secret');
+      if (!existsSync(secretFile)) writeSecret(secretFile, randomBytes(32));
+      const secret = readSecret(secretFile);
+      console.error('Paste this code into the Cardputer setup page, under Claude Pro. Anyone holding it can use this agent.');
+      console.log(pairingCode(secret));
+      const connector = new Connector({
+        relay: 'https://ntfy.sh', name: 'Claude', secret, env: {}, maxJobSecs: 300,
+        cwd: join(dir, 'workspace'), stateFile: join(dir, 'state.json'),
+        command: ['claude', '-p', '--continue', '--output-format', 'stream-json', '--verbose', '--tools', '',
+          '--append-system-prompt', CHAT_PROMPT, '--', '{prompt}'],
+      });
       for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => connector.stop());
       await connector.start();
       return;

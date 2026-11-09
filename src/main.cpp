@@ -408,7 +408,18 @@ void resume(const String& id) {
   }
 }
 
+void agentScreen(const AgentEntry& entry);  // defined below
+
 void sendPrompt(const String& text) {
+  if (cfg.anthropicKey.isEmpty()) {
+    const std::vector<AgentEntry> agents = loadAgents();
+    if (!agents.empty()) {  // Claude Pro plan through the paired PC: the agent screen is the chat
+      agentInput = text;
+      agentScreen(agents[0]);
+      view.show();
+      return;
+    }
+  }
   view.addUser(text);
   if (cfg.anthropicKey.isEmpty()) {
     view.add("No Anthropic API key. Type /setup to add one, or chat via Tab > Agents (Claude Code, Pro login).", ui::ERR);

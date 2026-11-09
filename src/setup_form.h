@@ -285,18 +285,19 @@ constexpr const char* kForm = R"HTML(<div><h1>{{PRODUCT}}</h1><p>Set up your {{T
 </section>
 <section><h2>Anthropic API key</h2>
 {{AKEY_NOTE}}<div class="pw"><input id="akey" name="akey" type="password" maxlength="256" placeholder="sk-ant-..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Anthropic API key"><button type="button" data-show="akey">Show</button></div>
-<p class="hint">Make one at console.anthropic.com, under API keys. What you chat is billed to that Anthropic account. No key? Pair an agent below and chat through Claude Code, which can use your Claude Pro login.</p>
+<p class="hint">Make one at console.anthropic.com, under API keys. What you chat is billed to that Anthropic account.</p>
+</section>
+<p class="hint" style="text-align:center;margin:.2rem 0"><b>OR</b></p>
+<section><h2>Use your Claude Pro plan</h2>
+{{AGENTS}}<label for="aname">Name it</label>
+<input id="aname" name="aname" value="{{KEPT_ANAME}}" maxlength="24" placeholder="Claude" autocapitalize="off" autocorrect="off" spellcheck="false">
+<div class="pw" style="margin-top:.5rem"><input id="acode" name="acode" type="password" maxlength="64" placeholder="Pairing code, cp1-..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Pairing code"><button type="button" data-show="acode">Show</button></div>
+<input id="arelay" name="arelay" value="{{KEPT_ARELAY}}" maxlength="128" placeholder="Relay: ntfy.sh unless you run your own" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Relay" style="margin-top:.5rem">
+<p class="hint">On a PC with Claude Code logged in, run <code>node kloudputer-connector.mjs chat</code> and paste the code it prints. The PC must stay on. Keep the code private: whoever has it can use that agent.</p>
 </section>
 <section><h2>Groq API key<small>optional</small></h2>
 {{GKEY_NOTE}}<div class="pw"><input id="gkey" name="gkey" type="password" maxlength="256" placeholder="gsk_..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Groq API key"><button type="button" data-show="gkey">Show</button></div>
 <p class="hint">Turns on voice: hold G0 to talk, and hear the answers. Free at console.groq.com/keys.</p>
-</section>
-<section><h2>Agents<small>optional</small></h2>
-{{AGENTS}}<label for="aname">Pair an agent</label>
-<input id="aname" name="aname" value="{{KEPT_ANAME}}" maxlength="24" placeholder="Name, like Hermes" autocapitalize="off" autocorrect="off" spellcheck="false">
-<div class="pw" style="margin-top:.5rem"><input id="acode" name="acode" type="password" maxlength="64" placeholder="Pairing code, cp1-..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Pairing code"><button type="button" data-show="acode">Show</button></div>
-<input id="arelay" name="arelay" value="{{KEPT_ARELAY}}" maxlength="128" placeholder="Relay: ntfy.sh unless you run your own" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Relay" style="margin-top:.5rem">
-<p class="hint">The agent's connector prints the pairing code. Keep it private: whoever has it can give that agent work.</p>
 </section>
 <section><h2>Model</h2>
 <select name="model" aria-label="Model">{{MODELS}}</select>
