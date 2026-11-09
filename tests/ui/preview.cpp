@@ -114,6 +114,7 @@ static std::vector<ui::MenuItem> mainItems(const char* model = "Haiku 5.5") {
           {"Screen sleep", "< 1 min >", "Left/right: dim then off   Del back"},
           {"Volume", "< 8 >", "Left / right change it   Del back"},
           {"Model", model},
+          {"Usage", "$0.04 today", "Enter: estimated cost   Del back"},
           {"Notes", "3 saved", "Enter lists them   Del back"},
           {"Wi-Fi", "HomeNet", "Enter scans for networks   Del back"},
           {"Setup from phone", "", "Enter: Wi-Fi and keys from a phone"},

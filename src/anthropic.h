@@ -76,10 +76,10 @@ inline ChatResult anthropicChat(const String& apiKey, const String& model, const
   return r;
 }
 
-// The title Haiku suggests for a first exchange, or nothing if it can't be had. Never worth an error on screen.
-inline String claudeTitle(const String& apiKey, const String& prompt, const String& reply) {
+// The title Haiku suggests for a first exchange, in `text`; not ok if it can't be had. Never worth an error on
+// screen. The token counts come back too, since this call is billed like any other.
+inline ChatResult claudeTitle(const String& apiKey, const String& prompt, const String& reply) {
   int code = 0;
   String message;
-  const ChatResult r = post(apiKey, kTitleModel, titleMessages(prompt, reply), titleOptions(), code, message);
-  return r.ok ? r.text : String();
+  return post(apiKey, kTitleModel, titleMessages(prompt, reply), titleOptions(), code, message);
 }

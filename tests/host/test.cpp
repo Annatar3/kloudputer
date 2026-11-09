@@ -11,6 +11,7 @@
 #include "notes.h"
 #include "power.h"
 #include "approvals.h"
+#include "usage.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...)                                     \
@@ -1500,6 +1501,42 @@ static void testApprovals() {
   CHECK(all.size() == approvals::kMaxWaiting && full.empty(), "takeAll empties it for a fail-closed denial");
 }
 
+static void testUsage() {
+  bool known = false;
+  CHECK(usage::costMicros("claude-haiku-5-5", 1000000, 0, 0, &known) == 100000 && known, "a million Haiku input tokens is $0.10");
+  CHECK(usage::costMicros("claude-haiku-5-5", 0, 1000000, 0) == 500000, "and $0.50 out");
+  CHECK(usage::costMicros("claude-sonnet-5-5", 812, 64, 0) == 2264, "812 in and 64 out on Sonnet is 2264 micro-dollars, got %u", usage::costMicros("claude-sonnet-5-5", 812, 64, 0));
+  CHECK(usage::costMicros("claude-fable-5-1", 100, 100, 2) == 1000 + 5000 + 20000, "searches add a cent each");
+  CHECK(usage::costMicros("my-own-model", 5000, 5000, 1, &known) == 10000 && !known, "an unpriced model counts only its searches and says so");
+  CHECK(usage::costMicros("claude-haiku-5-5", -5, -5, -1) == 0, "nonsense counts cost nothing");
+  CHECK(usage::costMicros("claude-haiku-5-5", 7, 0, 0) == 1, "rounds to the nearest millionth (0.7 -> 1)");
+  CHECK(usage::costMicros("claude-haiku-5-5", 4, 0, 0) == 0, "and down (0.4 -> 0)");
+
+  CHECK(usage::label("claude-haiku-5-5") == "$0.1/$0.5" && usage::label("claude-sonnet-5-5") == "$2/$10" && usage::label("claude-fable-5-1") == "$10/$50",
+        "menu labels, got %s", usage::label("claude-haiku-5-5").c_str());
+  CHECK(usage::label("other") == "?", "unknown model has no label");
+
+  CHECK(usage::money(0) == "$0" && usage::money(400) == "$0.0004" && usage::money(9999) == "$0.0100", "under a cent shows four decimals, got %s", usage::money(9999).c_str());
+  CHECK(usage::money(10000) == "$0.01" && usage::money(123456) == "$0.12" && usage::money(12300000) == "$12.30", "a cent and up shows two");
+
+  usage::Tally t;
+  usage::add(t, 500, 0);
+  CHECK(t.chat == 500 && t.day == 500 && t.total == 500 && t.date == 0, "before the clock is set it still adds up");
+  usage::add(t, 300, 20261109);
+  CHECK(t.date == 20261109 && t.day == 300 && t.total == 800 && t.chat == 800, "the first dated spend starts that day's count");
+  usage::add(t, 200, 20261109);
+  CHECK(t.day == 500, "same day accumulates");
+  usage::add(t, 50, 0);
+  CHECK(t.day == 550 && t.date == 20261109, "a spend with no clock stays in the current day");
+  CHECK(usage::spentToday(t, 20261109) == 550 && usage::spentToday(t, 20261110) == 0 && usage::spentToday(t, 0) == 550, "today reads zero once the date has moved on");
+  usage::add(t, 70, 20261110);
+  CHECK(t.day == 70 && t.total == 1120 && t.chat == 1120, "a new day restarts the day and keeps the total");
+  usage::Tally big;
+  big.total = 4294967000u;
+  usage::add(big, 1000, 1);
+  CHECK(big.total == 4294967295u, "totals stop at the top instead of wrapping to zero");
+}
+
 int main() {
   testChunks();
   testPromptHistory();
@@ -1542,6 +1579,7 @@ int main() {
   testAgentReport();
   testAgentMessages();
   testApprovals();
+  testUsage();
   testRelay();
   testAgentForm();
   testAgentStore();

@@ -23,6 +23,7 @@
 #include "sessions.h"
 #include "tts.h"
 #include "ui.h"
+#include "usage.h"
 #include "voice.h"
 
 // The loop task runs every TLS handshake. From the agent screen, voice upload sits ~7 calls deep (menu, agents,
@@ -31,7 +32,7 @@ constexpr size_t kLoopStack = 16 * 1024;
 size_t getArduinoLoopTaskStackSize() { return kLoopStack; }
 
 namespace {
-constexpr const char* kVersion = "v1.8";
+constexpr const char* kVersion = "v1.9";
 constexpr float kSilentRms = 20;  // clip RMS (around its mean) below this is treated as silence
 constexpr size_t kMaxInput = 2000;
 constexpr size_t kMaxHistoryMsgs = 10;
@@ -45,14 +46,15 @@ constexpr int SD_SCK = 40, SD_MISO = 39, SD_MOSI = 14, SD_CS = 12;
 struct ModelOpt {
   const char* id;
   const char* desc;
-  const char* price;  // per 1M tokens in/out
 };
+// Prices live in usage.h, which also adds up what the chats cost.
 constexpr ModelOpt kModels[] = {
-    {"claude-haiku-5-5", "fast, cheapest", "$0.1/$0.5"},
-    {"claude-sonnet-5-5", "balanced", "$2/$10"},
-    {"claude-opus-5-5", "smartest Opus", "$4/$20"},
-    {"claude-fable-5-1", "most capable", "$10/$50"},
+    {"claude-haiku-5-5", "fast, cheapest"},
+    {"claude-sonnet-5-5", "balanced"},
+    {"claude-opus-5-5", "smartest Opus"},
+    {"claude-fable-5-1", "most capable"},
 };
+static_assert(std::size(kModels) == std::size(usage::kPrices), "every model on the menu has a price");
 
 // In the order of tts::kVoices.
 constexpr const char* kVoiceKinds[] = {"female", "female", "female", "male", "male", "male"};
@@ -70,6 +72,7 @@ int dictation = 0;  // index into lang::kLanguages
 power::ScreenSleep screenSleep;
 int sleepOption = power::kDefaultOption;  // index into power::kOptions
 uint8_t fullBrightness = 128;
+usage::Tally spent;  // estimated cost: this chat, today, and all time
 notes::Notes memory;  // what Claude was asked to remember, from the SD card
 bool webSearch = true;  // let Claude search the web; off for the session if the API refuses it
 int boardId = -1;
@@ -106,6 +109,24 @@ struct KeyEvent {
 };
 
 // The keyboard state if a key just went down, else nullptr. Also refreshes button state (G0).
+// An agent's job can keep running after its screen is left; agentBackgroundTick (below, with the agent
+// screen) keeps listening for it from wherever keys are read.
+void agentBackgroundTick();
+void agentPause();
+int agentHolds = 0;
+
+// While one of these is alive the agent relay stays closed: only one TLS session fits in memory, and Claude,
+// Whisper and speech each need it.
+struct RelayHold {
+  RelayHold() {
+    agentPause();
+    ++agentHolds;
+  }
+  ~RelayHold() { --agentHolds; }
+  RelayHold(const RelayHold&) = delete;
+  RelayHold& operator=(const RelayHold&) = delete;
+};
+
 void setBacklight(power::Level level) {
   const uint8_t dim = std::max<int>(4, fullBrightness / 8);
   M5Cardputer.Display.setBrightness(level == power::Level::Awake ? fullBrightness : level == power::Level::Dim ? dim : 0);
@@ -118,6 +139,7 @@ void pokeScreen() {
 }
 
 const Keyboard_Class::KeysState* nextKeys() {
+  agentBackgroundTick();
   M5Cardputer.update();
   M5Cardputer.Keyboard.updateKeyList();
   M5Cardputer.Keyboard.updateKeysState();
@@ -232,6 +254,9 @@ void loadPrefs() {
     volume = p.getUChar("vol", volume);
     dictation = lang::indexOf(p.getString("lang", ""));
     webSearch = p.getBool("web", webSearch);
+    spent.date = p.getUInt("udate", 0);
+    spent.day = p.getUInt("uday", 0);
+    spent.total = p.getUInt("utotal", 0);
     sleepOption = power::optionFor(p.getUInt("sleep", power::kOptions[power::kDefaultOption].ms));
     p.end();
   }
@@ -256,7 +281,7 @@ void chooseModel() {
   for (int i = 0; i < n; ++i) {
     const bool cur = cfg.model == kModels[i].id;
     view.add(String(i + 1) + ") " + shortModel(kModels[i].id) + (cur ? " *" : "") + "  " + kModels[i].desc + "  " +
-                 kModels[i].price,
+                 usage::label(kModels[i].id),
              cur ? ui::GREEN : ui::DIM);
   }
   view.add("(price per 1M tokens in/out)", ui::DIM);
@@ -308,6 +333,7 @@ bool wifiSetup() {
 
 // The saved network is replaced only once a new one connects; cancelling or a failed join goes back to it.
 void changeWifi() {
+  const RelayHold hold;
   if (wifiSetup()) {
     timeOk = net::syncTime(cfg.tz.c_str());
   } else {
@@ -370,6 +396,7 @@ bool stopRequested() {
 // Synthesizes every chunk before playing any, so the answer plays without gaps mid-way. If a later
 // chunk fails (say, a rate limit), the ones already made still play.
 void speak(const String& text, ui::ChatView& v = view) {
+  const RelayHold hold;
   if (cfg.groqKey.isEmpty() || WiFi.status() != WL_CONNECTED) {
     voiceError(cfg.groqKey.isEmpty() ? "needs a Groq key (/setup)" : "offline", v);
     return;
@@ -423,6 +450,7 @@ void saveTurn(const String& prompt, const String& reply) {
 void resume(const String& id) {
   sessions::Meta meta;
   history.clear();
+  spent.chat = 0;  // a resumed chat counts from here; what it cost before isn't stored
   view.clear();
   const bool ok = sessions::load(id, meta, [](const String& prompt, const String& reply) {
     view.addUser(prompt);
@@ -489,17 +517,51 @@ void forget(const String& arg) {
   view.add(arg == "all" ? String("All notes forgotten.") : String("Forgotten."), ui::GREEN);
 }
 
+// yyyymmdd in local time, or 0 while the clock isn't set.
+uint32_t todayStamp() {
+  if (!timeOk) return 0;
+  const time_t now = time(nullptr);
+  tm local;
+  localtime_r(&now, &local);
+  return (local.tm_year + 1900) * 10000 + (local.tm_mon + 1) * 100 + local.tm_mday;
+}
+
+// Adds one API call to the running cost estimate and saves the day and all-time totals.
+void recordSpend(const String& model, const ChatResult& r) {
+  usage::add(spent, usage::costMicros(model, r.inTok, r.outTok, r.searches), todayStamp());
+  Preferences p;
+  if (p.begin("cputer", false)) {
+    p.putUInt("udate", spent.date);
+    p.putUInt("uday", spent.day);
+    p.putUInt("utotal", spent.total);
+    p.end();
+  }
+}
+
+void showUsage() {
+  view.add("Estimated from list prices and token counts:", ui::DIM);
+  view.add("this chat " + usage::money(spent.chat) + "   today " + usage::money(usage::spentToday(spent, todayStamp())) +
+               "   total " + usage::money(spent.total),
+           ui::GREEN);
+  if (!usage::priceOf(cfg.model)) view.add("No list price for " + cfg.model + ", so its tokens aren't counted.", ui::SYS);
+  view.add("The Anthropic Console has the real bill.", ui::DIM);
+}
+
 // After a chat's first exchange, Haiku names it so the Sessions list reads better than the first prompt.
 // Quiet on failure: the first-prompt title stays.
 void nameSession(const String& prompt, const String& reply) {
   if (!sdOk || session.id.isEmpty()) return;
-  const String title = sessions::cleanTitle(claudeTitle(cfg.anthropicKey, prompt, reply));
+  const ChatResult named = claudeTitle(cfg.anthropicKey, prompt, reply);
+  if (!named.ok) return;
+  recordSpend(kTitleModel, named);
+  const String title = sessions::cleanTitle(named.text);
   if (title.isEmpty() || !sessions::retitle(session.id, title)) return;
   session.title = title;
   Serial.printf("[chat] titled '%s'\n", title.c_str());
 }
 
 void sendPrompt(const String& text) {
+  const RelayHold hold;
   view.addUser(text);
   String note;
   if (notes::rememberText(text, note)) {
@@ -531,6 +593,7 @@ void sendPrompt(const String& text) {
     view.add("Web search isn't available for this key, so it is off. Enable it in the Anthropic Console.", ui::SYS);
   }
   if (r.ok) {
+    recordSpend(cfg.model, r);
     history.push_back({false, r.text});
     view.addClaude(r.text);
     const bool firstTurn = session.id.isEmpty();
@@ -592,6 +655,7 @@ void micTest() {
 
 // Hold G0 to talk into `v`'s input line, `buf`; the transcript can be fixed there before Enter.
 void doVoice(ui::ChatView& v, String& buf) {
+  const RelayHold hold;
   if (cfg.groqKey.isEmpty()) {
     v.add("Voice needs a Groq key. Type /setup to add one.", ui::ERR);
     return;
@@ -679,6 +743,7 @@ void showHelp() {
 
 void newChat() {
   history.clear();
+  spent.chat = 0;
   session = sessions::Meta();
   view.clear();
   view.add("New conversation.", ui::GREEN);
@@ -764,6 +829,9 @@ void showInfo() {
   view.add("board " + String(boardId) +
                (boardId == static_cast<int>(m5::board_t::board_M5CardputerADV) ? " (ADV)" : " (not ADV)") +
                "  kbd " + (kb && kb->ok() ? "ok" : "FAIL") + "  codec " + (adv_audio::codecPresent() ? "ok" : "MISSING"),
+           ui::DIM);
+  view.add("spent ~" + usage::money(spent.chat) + " chat  " + usage::money(usage::spentToday(spent, todayStamp())) + " today  " +
+               usage::money(spent.total) + " total",
            ui::DIM);
   view.add("heap " + String(ESP.getFreeHeap()) + "  max block " + String(ESP.getMaxAllocHeap()), ui::DIM);
   view.add("last restart: " + resetReason(), ui::DIM);
@@ -893,7 +961,7 @@ void modelMenu() {
   for (size_t i = 0; i < std::size(kModels); ++i) {
     const bool cur = cfg.model == kModels[i].id;
     if (cur) row = i;
-    items.push_back({modelName(kModels[i].id), String(kModels[i].price) + (cur ? "  *" : ""),
+    items.push_back({modelName(kModels[i].id), usage::label(kModels[i].id) + (cur ? "  *" : ""),
                      String(kModels[i].desc) + "  ($/1M tokens in/out)"});
   }
   showMenu("Model", std::move(items), row);
@@ -1060,6 +1128,7 @@ void afterSetup(const portal::Outcome& o) {
 
 // Phone setup takes the screen (its own Wi-Fi and page); the outcome is handled back in the chat.
 Then setupFromPhone() {
+  const RelayHold hold;
   phone::Current now = phone::currentFrom(currentSsid(), cfg.anthropicKey, cfg.groqKey, cfg.model, cfg.tz);
   for (const AgentEntry& a : loadAgents()) now.agents.push_back({a.name, a.relay});
   const portal::Outcome o = portal::run(M5Cardputer.Display, header, {now, modelChoices(), setupKey});
@@ -1101,7 +1170,16 @@ struct AgentLink {
   bool reported = false;
   approvals::Queue asks;  // permission requests waiting for y or n
   bool prompting = false;      // the front request is on screen
+  bool paired = false;
 };
+
+// The agent whose screen is open, or whose job is still running after its screen was left.
+std::unique_ptr<AgentLink> agentLink;
+bool agentOnScreen = false;
+
+void agentPause() {
+  if (agentLink) agentLink->relay.pause();
+}
 
 bool sendUp(AgentLink& a, agent::Kind kind, const String& job, uint32_t n, const String& text = String()) {
   header.setNote("sending...", ui::SYS);
@@ -1116,7 +1194,7 @@ void showReport(AgentLink& a) {
   const String text = a.report.text();
   a.report.reset();
   agentView.addClaude(text);
-  if (voiceReplies) {
+  if (voiceReplies && agentOnScreen) {
     a.relay.pause();  // speech opens its own TLS session; one at a time
     speak(text, agentView);
   }
@@ -1179,6 +1257,14 @@ void denyAllApprovals(AgentLink& a, bool tell) {
   a.prompting = false;
 }
 
+// News from an agent whose screen isn't open: a line in the chat, the footer of an open menu, and a beep.
+void notifyAgent(const String& text, bool sound) {
+  view.add(text, ui::SYS);
+  if (!view.shown()) menu.notice(text, ui::SYS);
+  pokeScreen();
+  if (sound) beep();
+}
+
 // One message off the relay. Anything that fails a check is dropped silently, as the protocol says.
 void onAgentMessage(AgentLink& a, const String& body) {
   String plain;
@@ -1206,7 +1292,8 @@ void onAgentMessage(AgentLink& a, const String& body) {
       if (a.state != AgentState::Working) break;  // the job is over; nothing is waiting on an answer
       switch (a.asks.add(m.req, m.tool, m.detail, millis())) {
         case approvals::Queue::Add::Kept:
-          if (!a.prompting) showApproval(a);
+          if (!agentOnScreen) notifyAgent(a.entry.name + " asks to use " + m.tool + ". Tab > Agents to answer.", true);
+          else if (!a.prompting) showApproval(a);
           break;
         case approvals::Queue::Add::Full:
           sendApprove(a, m.req, false);  // more than can be shown; refuse it rather than leave it hanging
@@ -1241,16 +1328,39 @@ void onAgentMessage(AgentLink& a, const String& body) {
   }
 }
 
+// Runs from nextKeys, so it is alive in the chat and in every menu. While a job is running and its agent's
+// screen is closed, this keeps reading the relay: a request for permission or the end of the job beeps and
+// leaves a line in the chat. Nothing is answered from here; the agent's screen does that.
+void agentBackgroundTick() {
+  static bool busy = false;
+  if (!agentLink || agentOnScreen || agentHolds || busy) return;
+  busy = true;
+  AgentLink& a = *agentLink;
+  for (String body; a.relay.poll(body);) onAgentMessage(a, body);
+  if (const size_t lapsed = a.asks.expire(millis())) {
+    notifyAgent(a.entry.name + ": " + String(static_cast<int>(lapsed)) + " request(s) timed out, so they were denied.", false);
+  }
+  if (a.state != AgentState::Working) {  // the job ended; its report is waiting on the agent's screen
+    notifyAgent(a.entry.name + (a.state == AgentState::Done ? " finished." : " stopped.") + " Tab > Agents to read it.", true);
+    a.relay.stop();
+    agentLink.reset();
+  }
+  busy = false;
+}
+
 // The agent screen: type or speak a task, watch its steps, read (and hear) the report. Tab, or Del on
-// an empty line, goes back to the list. The relay is only streamed while this screen is open.
+// an empty line, goes back to the list. Leaving while a job runs keeps listening for it in the background.
 void agentScreen(const AgentEntry& entry) {
-  AgentLink a;
-  a.entry = entry;
-  uint8_t secret[32];
-  agent::RelayUrl url;
-  const bool paired = agent::parsePairingCode(entry.code, secret) && agent::deriveKeys(secret, a.keys) &&
-                      agent::parseRelay(entry.relay.length() ? entry.relay : agent::kDefaultRelay, url);
-  memset(secret, 0, sizeof secret);
+  const bool back = agentLink && agentLink->entry.name == entry.name && agentLink->entry.code == entry.code;
+  if (!back) {
+    if (agentLink) {  // another agent's job was still being listened to; it can't be any more
+      denyAllApprovals(*agentLink, true);
+      agentLink->relay.stop();
+    }
+    agentLink.reset(new AgentLink());
+  }
+  AgentLink& a = *agentLink;
+  agentOnScreen = true;
   if (agentViewOf != entry.name) {
     agentView.clear();
     agentInput = "";
@@ -1259,17 +1369,27 @@ void agentScreen(const AgentEntry& entry) {
   agentView.setTitle(entry.name);
   agentView.show();
   agentView.setInput(agentInput);
-  if (!paired) {
-    agentView.add("This agent's pairing is damaged. Pair it again from /setup.", ui::ERR);
-    a.state = AgentState::Error;
-  } else if (!timeOk || WiFi.status() != WL_CONNECTED) {
-    agentView.add("Agents need Wi-Fi and the clock (messages carry the time). /wifi to connect.", ui::ERR);
-    a.state = AgentState::Offline;
+  if (back) {
+    if (!a.asks.empty()) showApproval(a);
   } else {
-    const uint32_t now = time(nullptr);
-    a.loose = now;
-    a.relay.begin(url, a.keys.topicDown, now - 5);  // a little early, for clock skew against the relay
-    sendUp(a, agent::Kind::Ping, "", ++a.loose);
+    a.entry = entry;
+    uint8_t secret[32];
+    agent::RelayUrl url;
+    a.paired = agent::parsePairingCode(entry.code, secret) && agent::deriveKeys(secret, a.keys) &&
+               agent::parseRelay(entry.relay.length() ? entry.relay : agent::kDefaultRelay, url);
+    memset(secret, 0, sizeof secret);
+    if (!a.paired) {
+      agentView.add("This agent's pairing is damaged. Pair it again from /setup.", ui::ERR);
+      a.state = AgentState::Error;
+    } else if (!timeOk || WiFi.status() != WL_CONNECTED) {
+      agentView.add("Agents need Wi-Fi and the clock (messages carry the time). /wifi to connect.", ui::ERR);
+      a.state = AgentState::Offline;
+    } else {
+      const uint32_t now = time(nullptr);
+      a.loose = now;
+      a.relay.begin(url, a.keys.topicDown, now - 5);  // a little early, for clock skew against the relay
+      sendUp(a, agent::Kind::Ping, "", ++a.loose);
+    }
   }
 
   String noteShown;
@@ -1328,7 +1448,7 @@ void agentScreen(const AgentEntry& entry) {
       if (text.isEmpty()) {
       } else if (a.state == AgentState::Working) {
         agentView.add("A job is running. Esc twice cancels it.", ui::SYS);
-      } else if (paired && a.relay.state() != agent::Relay::State::Off) {
+      } else if (a.paired && a.relay.state() != agent::Relay::State::Off) {
         a.job = agent::newJobId();
         a.n = 0;
         denyAllApprovals(a, false);
@@ -1346,9 +1466,16 @@ void agentScreen(const AgentEntry& entry) {
     }
     delay(5);
   }
+  agentOnScreen = false;
+  agentView.hide();
+  if (a.state == AgentState::Working && a.job.length() && a.relay.state() != agent::Relay::State::Off) {
+    a.prompting = false;  // a request left unanswered keeps waiting and shows again on the way back in
+    view.add(entry.name + " keeps working. You'll hear a beep if it asks or finishes.", ui::DIM);
+    return;
+  }
   denyAllApprovals(a, true);
   a.relay.stop();
-  agentView.hide();
+  agentLink.reset();
 }
 
 String agentsValue() {
@@ -1454,6 +1581,8 @@ const MainRow kMainMenu[] = {
     {"Volume", []() -> String { return "< " + String(volume) + " >"; }, nullptr,
      [](int dir) { applyVolume(std::min(std::max(volume + dir, 1), 10)); }, "Left / right change it   Del back"},
     {"Model", []() -> String { return modelName(cfg.model); }, inMenu<modelMenu>, nullptr, nullptr},
+    {"Usage", []() -> String { return usage::money(usage::spentToday(spent, todayStamp())) + " today"; }, inChat<showUsage>,
+     nullptr, "Enter: estimated cost   Del back"},
     {"Notes", []() -> String { return String(memory.items().size()) + " saved"; }, inChat<showNotes>, nullptr,
      "Enter lists them   Del back"},
     {"Wi-Fi", []() -> String { return WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String("offline"); },
