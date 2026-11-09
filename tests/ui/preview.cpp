@@ -166,7 +166,7 @@ static void same(const std::string& what, const std::function<void(Screen&)>& in
 int main() {
   {
     Screen s;
-    ui::splash(s.gfx, "v1.7");
+    ui::splash(s.gfx, "v1.9");
     ui::splashStep(s.gfx, "Wi-Fi: HomeNet...", 2, 4);
     s.shot("01_splash");
   }

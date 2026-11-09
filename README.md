@@ -6,6 +6,10 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 > Kloudputer is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by
 > Anthropic. Claude is a trademark of Anthropic, PBC.
 
+![Six Kloudputer screens: the start screen, a chat, an agent asking for permission, the menu, saved chats and phone setup](docs/screens.png)
+
+*The screens above are drawn by the firmware's own UI code (`tests/ui/preview.sh`), at twice their 240x135 size.*
+
 ## What it does
 
 - **Chat with Claude.** The model can be Haiku, Sonnet, Opus or Fable, switched from the menu.
