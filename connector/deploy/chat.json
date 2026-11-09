@@ -1,0 +1,15 @@
+{
+  "relay": "https://ntfy.sh",
+  "secretFile": "./chat.secret",
+  "name": "Claude (Pro)",
+  "cwd": "./chat-workspace",
+  "command": [
+    "claude", "-p", "--continue",
+    "--output-format", "stream-json", "--verbose",
+    "--tools", "",
+    "--append-system-prompt", "You are replying on a 40-column Cardputer screen. Be concise, plain ASCII, no markdown or emoji.",
+    "--", "{prompt}"
+  ],
+  "maxJobSecs": 300,
+  "stateFile": "./chat-state.json"
+}

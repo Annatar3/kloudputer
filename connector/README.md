@@ -21,6 +21,19 @@ secret stops working. `run` refuses a secret file that group or other users can 
 
 The pairing code is the secret. Anyone holding it can give this agent tasks, so only `pair` and `code` print it.
 
+## Chat with a Claude Pro or Max account (no API key)
+
+The firmware talks to Anthropic with an API key. A Pro/Max plan can't be used that way: Anthropic only allows
+those logins inside Claude Code and claude.ai. The connector runs the real `claude` CLI, so it can use your
+plan, and the Cardputer chats with it as an agent.
+
+1. On the PC: `claude` once and `/login` with your Pro account. Make the folder `deploy/chat.json` names as `cwd`.
+2. `node kloudputer-connector.mjs pair --secret chat.secret`, then `node kloudputer-connector.mjs run --config deploy/chat.json`.
+3. On the Cardputer, paste the code in setup (an API key is no longer required once an agent is paired), then Tab > Agents.
+
+`deploy/chat.json` uses `--continue`, so replies keep the conversation going in that folder, and `--tools ""`, so chat
+cannot run commands. Replies come after the whole answer is ready, not word by word. The PC must stay on.
+
 ## Configuration
 
 | key          | default            | meaning                                                                                  |

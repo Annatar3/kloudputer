@@ -192,7 +192,10 @@ inline String validate(const Form& f, bool haveAnthropicKey, const std::vector<C
   if (!printable(f.anthropicKey, false) || !printable(f.groqKey, false)) return "A key has spaces or odd characters in it.";
   if (f.anthropicKey.length() && !f.anthropicKey.startsWith("sk-ant-")) return "The Anthropic key should start with sk-ant-";
   if (f.groqKey.length() && !f.groqKey.startsWith("gsk_")) return "The Groq key should start with gsk_";
-  if (!haveAnthropicKey && f.anthropicKey.isEmpty()) return "Paste your Anthropic API key to finish setup.";
+  // An API key, or a paired agent (Claude Code on a PC, which can use a Claude Pro login), is enough to finish setup.
+  if (!haveAnthropicKey && f.anthropicKey.isEmpty() && agents.empty() && f.agentCode.isEmpty()) {
+    return "Paste your Anthropic API key, or pair an agent, to finish setup.";
+  }
   if (f.model.length() && std::none_of(models.begin(), models.end(), [&f](const Choice& m) { return m.id == f.model; })) {
     return "Pick a model from the list.";
   }
@@ -282,7 +285,7 @@ constexpr const char* kForm = R"HTML(<div><h1>{{PRODUCT}}</h1><p>Set up your {{T
 </section>
 <section><h2>Anthropic API key</h2>
 {{AKEY_NOTE}}<div class="pw"><input id="akey" name="akey" type="password" maxlength="256" placeholder="sk-ant-..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Anthropic API key"><button type="button" data-show="akey">Show</button></div>
-<p class="hint">Make one at console.anthropic.com, under API keys. What you chat is billed to that Anthropic account.</p>
+<p class="hint">Make one at console.anthropic.com, under API keys. What you chat is billed to that Anthropic account. No key? Pair an agent below and chat through Claude Code, which can use your Claude Pro login.</p>
 </section>
 <section><h2>Groq API key<small>optional</small></h2>
 {{GKEY_NOTE}}<div class="pw"><input id="gkey" name="gkey" type="password" maxlength="256" placeholder="gsk_..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Groq API key"><button type="button" data-show="gkey">Show</button></div>

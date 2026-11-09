@@ -411,7 +411,7 @@ void resume(const String& id) {
 void sendPrompt(const String& text) {
   view.addUser(text);
   if (cfg.anthropicKey.isEmpty()) {
-    view.add("No Anthropic API key yet. Type /setup to add one from your phone.", ui::ERR);
+    view.add("No Anthropic API key. Type /setup to add one, or chat via Tab > Agents (Claude Code, Pro login).", ui::ERR);
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
@@ -1273,7 +1273,7 @@ void setup() {
   loadSettings();
   cryptoOk = agent::selfTest();
 
-  if (cfg.anthropicKey.isEmpty()) {
+  if (cfg.anthropicKey.isEmpty() && loadAgents().empty()) {
     bootStep("ready", kBootSteps);
     delay(300);
     view.add("No Anthropic API key yet, so let's set up from your phone.", ui::SYS);
