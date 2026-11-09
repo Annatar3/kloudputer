@@ -200,7 +200,7 @@ test('throttles steps to one per window and keeps only the latest', async t => {
 });
 
 test('the default step window is 8 s', { timeout: 20_000 }, async t => {
-  const h = await harness({ command: agent('steps', '3', '50', '8600'), options: { stepEveryMs: undefined } });
+  const h = await harness({ command: agent('steps', '3', '50', '9800'), options: { stepEveryMs: undefined } });
   t.after(() => h.close());
   const j = jobId();
   await h.card.send({ k: 'ask', j, text: 'steps' });
@@ -208,7 +208,8 @@ test('the default step window is 8 s', { timeout: 20_000 }, async t => {
   const steps = h.card.of(j).filter(m => m.k === 'step');
   assert.deepEqual(steps.map(s => s.text), ['Bash: step-1', 'Bash: step-3']);
   const gap = h.ntfy.arrivedAt(steps[1].relayId) - h.ntfy.arrivedAt(steps[0].relayId);
-  assert.ok(gap >= 7900 && gap < 9000, `steps ${gap} ms apart`);
+  // Never closer than the window at the relay. The upper bound only says the default is 8 s, with room for a slow runner.
+  assert.ok(gap >= 8000 && gap < 10_500, `steps ${gap} ms apart`);
 });
 
 test('a pending step is dropped when the job ends, so done is last', async t => {

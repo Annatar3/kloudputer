@@ -377,6 +377,9 @@ class Outbox {
     this.#draining = true;
     for (let msg = this.#next(); msg; msg = this.#next()) {
       await this.deliver(msg).catch(err => this.log(`send failed: ${err.message}`));
+      // Count the window from when the step finished sending, so a slow publish can't put two steps closer than
+      // stepEveryMs at the relay.
+      if (msg.k === 'step') this.#lastStepAt = Date.now();
     }
     this.#draining = false;
   }
