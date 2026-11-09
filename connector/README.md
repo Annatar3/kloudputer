@@ -21,6 +21,22 @@ secret stops working. `run` refuses a secret file that group or other users can 
 
 The pairing code is the secret. Anyone holding it can give this agent tasks, so only `pair` and `code` print it.
 
+## Approvals from the Cardputer
+
+By default an agent that wants something its settings don't allow is just refused. With `"approvals": true` in the config
+(and the `claude` CLI as the command), the connector asks the Cardputer instead. The screen shows the tool and exactly what
+it will run, the device beeps, and `y` allows that one call while `n` or Esc denies it. Unanswered for 5 minutes, or if the job
+ends, it is denied. See Approvals in `PROTOCOL.md`.
+
+How it works: the connector adds `--mcp-config` and `--permission-prompt-tool mcp__kloudputer__approve` to the command, before the
+`--` that precedes the prompt. The tool is this same script run as `node kloudputer-connector.mjs mcp --socket <path>`, and it
+talks to the connector over a Unix socket in a private temporary folder (a named pipe on Windows). Your own hooks and
+settings still apply first: a call a hook denies never reaches the Cardputer, and anything the settings already allow never
+needs to be asked.
+
+Only the device's `approve` message can allow anything, and it is sealed with the pairing secret like every other message, so
+protect the pairing code as before.
+
 ## Configuration
 
 | key          | default            | meaning                                                                                  |
@@ -32,6 +48,7 @@ The pairing code is the secret. Anyone holding it can give this agent tasks, so 
 | `command`    | required           | argv array. Each element equal to `"{prompt}"` becomes the task text, as one argument.   |
 | `env`        | `{}`               | Extra environment variables for the agent, on top of the connector's own.                |
 | `maxJobSecs` | `900`              | A job still running after this many seconds is killed and reported as timed out. At most 86,400. |
+| `approvals`  | `false`            | Ask the Cardputer before the agent uses a tool its settings don't already allow (Claude Code only). See Approvals from the Cardputer. |
 | `stateFile`  | required           | Where the connector keeps the last relay message id, its message counter and recent `(j, n)` pairs. Must be writable. |
 
 Relative paths resolve against the config file's directory. An unknown key is an error, so a typo cannot silently fall

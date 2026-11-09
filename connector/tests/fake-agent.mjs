@@ -11,6 +11,7 @@
 //   resultHang <pidfile>             report, then keep running
 //   badtool                          use tools named like Object.prototype methods, then report
 //   mark <file>                      create the file, then report
+//   perm <tool> <json> [<tool> <json>...]  ask the --permission-prompt-tool for each call at once, then report the answers
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -26,7 +27,48 @@ const bash = command => emit({ type: 'assistant', message: { role: 'assistant', 
 const grandchild = stdio => spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio });
 const hang = () => setInterval(() => {}, 1000);
 
+// Speaks MCP to the server named in --mcp-config the way claude does for its permission prompt tool.
+async function askPermissions(pairs) {
+  const server = JSON.parse(rest[rest.indexOf('--mcp-config') + 1]).mcpServers.kloudputer;
+  const toolName = rest[rest.indexOf('--permission-prompt-tool') + 1];
+  const mcp = spawn(server.command, server.args, { stdio: ['pipe', 'pipe', 'inherit'] });
+  const waiting = new Map();
+  let buffered = '';
+  mcp.stdout.on('data', chunk => {
+    buffered += chunk;
+    const lines = buffered.split('\n');
+    buffered = lines.pop();
+    for (const line of lines.filter(Boolean)) {
+      const m = JSON.parse(line);
+      waiting.get(m.id)?.(m);
+    }
+  });
+  let id = 0;
+  const call = (method, params) => new Promise(resolve => {
+    waiting.set(++id, resolve);
+    mcp.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+  });
+  await call('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'fake-claude', version: '0' } });
+  mcp.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+  const listed = await call('tools/list');
+  const answers = await Promise.all(pairs.map(([tool, input], i) => call('tools/call', { name: 'approve', arguments: { tool_name: tool, input: JSON.parse(input), tool_use_id: `toolu_${i}` } })));
+  mcp.kill();
+  return { toolName, listed: listed.result.tools.map(t => t.name), decisions: answers.map(a => JSON.parse(a.result.content[0].text)) };
+}
+
 switch (mode) {
+  case 'argv':
+    init();
+    result(JSON.stringify(process.argv.slice(3)));
+    break;
+  case 'perm': {
+    const flag = rest.indexOf('--mcp-config');
+    const pairs = [];
+    for (let i = 0; i < flag; i += 2) pairs.push([rest[i], rest[i + 1]]);
+    init();
+    result(JSON.stringify(await askPermissions(pairs)));
+    break;
+  }
   case 'replay':
     for (const line of readFileSync(rest[0], 'utf8').split('\n').filter(Boolean)) {
       process.stdout.write(line + '\n');

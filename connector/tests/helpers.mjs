@@ -79,7 +79,7 @@ export class Card {
 export const jobId = () => randomBytes(4).toString('hex');
 
 // One connector, a mock relay, and a paired Card, all in a fresh temp dir.
-export async function harness({ command, maxJobSecs = 30, options = {}, ntfy } = {}) {
+export async function harness({ command, maxJobSecs = 30, options = {}, ntfy, approvals } = {}) {
   const dir = tempDir();
   const relay = ntfy ?? (await startMockNtfy());
   const secretFile = join(dir, 'secret');
@@ -95,7 +95,7 @@ export async function harness({ command, maxJobSecs = 30, options = {}, ntfy } =
   try {
     lib.writeSecret(secretFile, randomBytes(32));
     writeFileSync(configFile, JSON.stringify({
-      relay: relay.url, secretFile, name: 'Test agent', cwd: dir, command, maxJobSecs, stateFile: join(dir, 'state.json'),
+      relay: relay.url, secretFile, name: 'Test agent', cwd: dir, command, maxJobSecs, stateFile: join(dir, 'state.json'), ...(approvals === undefined ? {} : { approvals }),
     }));
     card = new Card(relay.url, lib.pairingCode(lib.readSecret(secretFile)));
     current = start();

@@ -43,6 +43,15 @@ const MUTANTS = [
   ['abrupt-stop', 'stop goes offline before reporting the job', 'while ((this.job || !this.outbox.idle) && Date.now() < deadline && !this.failure) await delay(50);', ''],
   ['persist-ignored', 'acts on a message whose state was not saved', 'if (this.#persist() && checked.msg)', 'if ((this.#persist(), checked.msg))'],
   ['no-start-since', 'first reconnect has no since', 'this.state.since ??= String(Math.floor(nowSecs()));', ''],
+  ['approval-timeout-allows', 'a request nobody answers is allowed', "this.#settle(req, false, 'No answer from the Cardputer in time", "this.#settle(req, true, 'No answer from the Cardputer in time"],
+  ['approval-always-allow', 'every answer allows', 'this.#settle(req, allow === true, allow === true ?', 'this.#settle(req, true, allow === true ?'],
+  ['approval-args-last', 'prompt tool options go after the prompt', 'argv.splice(Math.max(at, 1), 0, ...extraArgs);', 'argv.push(...extraArgs);'],
+  ['approval-folder-kept', 'the socket folder outlives the job', '    rmSync(this.#dir, { recursive: true, force: true });\n', ''],
+  ['approval-open-on-close', 'requests still waiting at job end are left hanging', "    for (const req of [...this.#pending.keys()]) this.#settle(req, false, 'The job ended before this was answered.');\n", ''],
+  ['approval-any-job', 'an answer for another job is accepted', 'if (this.job?.j === msg.j) this.#approvals?.answer(msg.req, msg.allow);', 'this.#approvals?.answer(msg.req, msg.allow);'],
+  ['approval-fails-open', 'an unreachable connector allows the call', "finish({ allow: false, message: `The connector could not be reached", "finish({ allow: true, message: `The connector could not be reached"],
+  ['approval-no-redaction', 'a secret in a command is shown on the screen', 'const shown = scrub(clip(flat, max * 4));', 'const shown = clip(flat, max * 4);'],
+  ['approval-hidden-tail', 'a cut command does not say it was cut', 'return clip(shown, kept) + markerFor(kept);', 'return clip(shown, max);'],
 ];
 const SUITE_DEADLINE_MS = 180_000;
 
