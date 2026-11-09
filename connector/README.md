@@ -21,6 +21,24 @@ secret stops working. `run` refuses a secret file that group or other users can 
 
 The pairing code is the secret. Anyone holding it can give this agent tasks, so only `pair` and `code` print it.
 
+## Chat with a Claude Pro or Max account (no API key)
+
+The firmware talks to Anthropic with an API key. A Pro/Max plan can't be used that way: Anthropic only allows
+those logins inside Claude Code and claude.ai. The connector runs the real `claude` CLI, so it can use your
+plan, and the Cardputer chats with it.
+
+1. On a PC where Claude Code is installed and logged in (`claude`, then `/login`), download this one file and run it:
+   ```sh
+   curl -fsSLO https://raw.githubusercontent.com/rishabharora-kk/kloudputer/claude-pro-via-connector/connector/kloudputer-connector.mjs
+   node kloudputer-connector.mjs chat
+   ```
+   It creates its own secret and workspace in `~/.kloudputer`, prints a pairing code, and keeps running.
+2. On the Cardputer's phone setup page, paste that code under **Use your Claude Pro plan** instead of an API key.
+3. Type on the Cardputer as usual. With no API key, your messages go to Claude through that PC.
+
+Chat keeps its conversation (`--continue`) and cannot run tools (`--tools ""`). Replies arrive whole, not word by
+word, and the PC has to stay on. For a custom setup, use `deploy/chat.json` with `run --config`.
+
 ## Configuration
 
 | key          | default            | meaning                                                                                  |

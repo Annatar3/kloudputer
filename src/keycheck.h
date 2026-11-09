@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include "certs.h"
+#include "gemini.h"
 
 namespace keycheck {
 // The HTTP status of an authenticated GET, or a negative HTTPClient error. The body is never read.
@@ -25,6 +26,13 @@ inline int anthropic(const String& key) {
 }
 
 inline int groq(const String& key) { return get("https://api.groq.com/openai/v1/models", "Authorization", "Bearer " + key); }
+
+inline int gemini_(const String& key) {
+  return get("https://generativelanguage.googleapis.com/v1beta/models", "x-goog-api-key", key);
+}
+
+// The voice key is a Gemini key (starts with AIza) or a Groq key.
+inline int voice(const String& key) { return gemini::isKey(key) ? gemini_(key) : groq(key); }
 
 inline bool works(int code) { return code == 200; }
 

@@ -1,4 +1,4 @@
-// Kloudputer — push-to-talk voice: record 16 kHz mono WAV to the SD card, transcribe with Groq Whisper.
+// Kloudputer — push-to-talk voice: record 16 kHz mono WAV to the SD card, transcribe with Gemini or Groq Whisper.
 //
 // Capture runs on our own always-on I2S driver (audio_adv.h); its DMA ring keeps filling while we
 // write each 100 ms piece to SD, so audio never accumulates in RAM and can't fight TLS for heap.
@@ -10,6 +10,7 @@
 #include "audio_adv.h"
 #include "brand.h"
 #include "certs.h"
+#include "gemini.h"
 
 namespace voice {
 constexpr uint32_t kRate = 16000;
@@ -150,6 +151,11 @@ struct Transcript {
 inline Transcript transcribe(const String& groqKey) {
   Transcript t;
   const uint32_t t0 = millis();
+  if (gemini::isKey(groqKey)) {  // the voice key is a Google AI key
+    t.ok = gemini::transcribe(groqKey, kPath, t.text, t.error);
+    t.ms = millis() - t0;
+    return t;
+  }
   File f = SD.open(kPath, FILE_READ);
   if (!f) {
     t.error = "no recording on SD";
