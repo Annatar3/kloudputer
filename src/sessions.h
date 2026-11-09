@@ -374,6 +374,49 @@ inline bool retitle(const String& id, const String& title) {
   return SD.rename(tmp, path);
 }
 
+// Every word of the query appears somewhere in the chat's prompts and replies, ignoring case. The file is read in
+// small pieces and never held whole. The header line is skipped: the title has its own filter.
+inline bool contains(const String& id, const String& query) {
+  std::vector<String> words;
+  String q = query;
+  q.toLowerCase();
+  for (int from = 0; from < static_cast<int>(q.length());) {
+    int sp = q.indexOf(' ', from);
+    if (sp < 0) sp = q.length();
+    if (sp > from) words.push_back(q.substring(from, sp));
+    from = sp + 1;
+  }
+  if (words.empty()) return true;
+  size_t longest = 0;
+  for (const String& w : words) longest = std::max<size_t>(longest, w.length());
+  File f = SD.open(pathOf(id), FILE_READ);
+  if (!f) return false;
+  std::vector<bool> found(words.size(), false);
+  size_t missing = words.size();
+  String window;  // the tail of the last piece plus this one, so a word split across two pieces still matches
+  bool header = true;
+  uint8_t chunk[256];
+  for (size_t n = f.read(chunk, sizeof chunk); n > 0 && missing; n = f.read(chunk, sizeof chunk)) {
+    size_t i = 0;
+    if (header) {
+      while (i < n && chunk[i] != '\n') ++i;
+      if (i == n) continue;
+      header = false;
+      ++i;
+    }
+    for (; i < n; ++i) window += static_cast<char>(tolower(chunk[i]));
+    for (size_t w = 0; w < words.size(); ++w) {
+      if (!found[w] && window.indexOf(words[w]) >= 0) {
+        found[w] = true;
+        --missing;
+      }
+    }
+    if (window.length() >= longest) window = window.substring(window.length() - (longest - 1));
+  }
+  f.close();
+  return missing == 0;
+}
+
 // Every word of the query appears in the title, ignoring case. An empty query matches everything.
 inline bool matches(const String& title, const String& query) {
   String hay = title;

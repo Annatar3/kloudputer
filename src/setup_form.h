@@ -302,7 +302,7 @@ constexpr const char* kForm = R"HTML(<div><h1>{{PRODUCT}}</h1><p>Set up your {{T
 <section><h2>Time zone</h2>
 <input id="tz" name="tz" value="{{TZ}}" data-now="{{TZ_NOW}}" maxlength="64" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Time zone">
 <p class="hint" id="tzname"></p>
-<p class="hint">A fixed offset from UTC, so it won't follow daylight saving changes.</p>
+<p class="hint" id="tzdst"></p>
 </section>
 <button class="save" type="submit">Save</button>
 <p class="hint" style="text-align:center">On Android, if this page stops loading or won't save, turn off mobile data for a minute.</p>
@@ -318,13 +318,43 @@ function posixTz(offsetMin) {
   var name = '<' + (east > 0 ? '+' : '-') + (h < 10 ? '0' : '') + h + mm + '>';
   return name + (east > 0 ? '-' : '') + h + (mm ? ':' + mm : '');
 }
+// The phone's zone for `year` as a POSIX TZ string. With daylight saving it carries the rule, like
+// "<+01>-1<+02>-2,M3.5.0/2,M10.5.0/3", worked out from the phone's own clock: the two moments in the year its
+// offset changes. Without daylight saving, or with a pattern that isn't two changes, it is the fixed offset.
+function posixRule(year) {
+  var H = 3600000, start = Date.UTC(year, 0, 1), changes = [];
+  var off = function (ms) { return new Date(ms).getTimezoneOffset(); };
+  var prev = off(start);
+  for (var i = 1; i <= 366 * 24; i++) {
+    var at = start + i * H, cur = off(at);
+    if (cur === prev) continue;
+    while (off(at - 60000) === cur) at -= 60000;  // some zones change on the half hour
+    changes.push({at: at, from: prev, to: cur});
+    prev = cur;
+  }
+  if (changes.length !== 2 || changes[0].from !== changes[1].to) return posixTz(off(Date.now()));
+  var std = Math.max(changes[0].from, changes[0].to), dst = Math.min(changes[0].from, changes[0].to);
+  var part = function (o) { return o === 0 ? '<+00>0' : posixTz(o); };
+  var rule = function (c) {
+    var local = new Date(c.at - c.from * 60000);  // wall clock just before the change, read from the UTC fields
+    var day = local.getUTCDate(), month = local.getUTCMonth(), m = local.getUTCMinutes();
+    var days = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    var week = day + 7 > days ? 5 : Math.ceil(day / 7);
+    return 'M' + (month + 1) + '.' + week + '.' + local.getUTCDay() + '/' + local.getUTCHours() + (m ? ':' + (m < 10 ? '0' : '') + m : '');
+  };
+  var toDst = changes[0].to === dst ? changes[0] : changes[1], toStd = toDst === changes[0] ? changes[1] : changes[0];
+  return part(std) + part(dst) + ',' + rule(toDst) + ',' + rule(toStd);
+}
 </script>
 <script>
 (function () {
   var tz = document.getElementById('tz'), phoneTz = posixTz(new Date().getTimezoneOffset()), zone = '';
   try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
-  if (!tz.value) tz.value = phoneTz;
-  // TODO: follow daylight saving by mapping the IANA zone to a POSIX rule like CET-1CEST,M3.5.0,M10.5.0/3.
+  var phoneRule = posixRule(new Date().getFullYear());
+  // A saved fixed offset that matches the phone right now is the same zone without its rule: upgrade it.
+  if (!tz.value || tz.value === phoneTz) tz.value = phoneRule;
+  document.getElementById('tzdst').textContent = tz.value.indexOf(',') > 0 ?
+      'It follows daylight saving changes.' : 'A fixed offset from UTC, with no daylight saving changes.';
   var cardTz = tz.dataset.now;
   document.getElementById('tzname').textContent = (zone ? 'Your phone is on ' + zone + ' (' + phoneTz + ').' :
       'From your phone: ' + phoneTz + '.') + (cardTz && cardTz !== 'UTC0' && cardTz !== phoneTz ? ' The Cardputer has ' + cardTz + '.' : '');

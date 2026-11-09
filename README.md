@@ -17,8 +17,11 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 - **Cost estimate.** The menu shows what your chats cost today, this chat and in total, from list prices and token counts.
 - **Notes.** Say or type "remember that my server is atlas" (or `/remember ...`), and Claude knows it in every chat.
   `/notes` lists them and `/forget N` removes one. They live in `kloudputer/notes.txt` on the SD card.
-- **Prompt history.** Fn+; and Fn+. recall what you sent before, like Claude Code. Fn+, and Fn+/ scroll.
-- **Tidy chat list.** Each chat is named after its first exchange, and `s` in Sessions filters the list by title.
+- **Prompt history.** Fn+; and Fn+. recall what you sent before, like Claude Code, also after a restart. Fn+, and Fn+/
+  scroll.
+- **Tidy chat list.** Each chat is named after its first exchange. `s` in Sessions filters the list by title as you
+  type, and Enter also searches inside the chats.
+- **Daylight saving.** Phone setup takes the daylight saving rule from your phone, so dates stay right all year.
 - **Dictation language.** Pick the language you speak from the menu, or leave it on Auto.
 - **Screen sleep.** The screen dims, then turns off after the idle time you choose.
 - **Setup from your phone.** Scan a QR code, and a setup page opens where you paste your keys and pick Wi-Fi.

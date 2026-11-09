@@ -68,6 +68,7 @@ std::vector<ChatMsg> history;
 PollingTCA8418Reader* kb = nullptr;
 String input;
 prompts::History promptHistory;
+size_t historyBytes = 0;  // size of the saved history file
 int dictation = 0;  // index into lang::kLanguages
 power::ScreenSleep screenSleep;
 int sleepOption = power::kDefaultOption;  // index into power::kOptions
@@ -130,6 +131,8 @@ struct RelayHold {
 void setBacklight(power::Level level) {
   const uint8_t dim = std::max<int>(4, fullBrightness / 8);
   M5Cardputer.Display.setBrightness(level == power::Level::Awake ? fullBrightness : level == power::Level::Dim ? dim : 0);
+  // With the screen off there is nothing to draw, so the CPU drops to the slowest clock Wi-Fi still works at.
+  setCpuFrequencyMhz(level == power::Level::Off ? 80 : 240);
 }
 
 // Wakes the screen when something shows on it without a key press, like a reply arriving.
@@ -860,7 +863,7 @@ void showInfo() {
 // ---------- menus ----------
 constexpr const char* kNavHint = "Arrows move  Enter pick  Del back";
 constexpr const char* kSessionsHint = "Enter open  x delete  s find  Del back";
-constexpr const char* kFindHint = "Type to filter   Enter ok   Esc clear";
+constexpr const char* kFindHint = "Type: titles  Enter: inside chats too";
 
 enum class Nav : uint8_t { None, Up, Down, Left, Right, Pick, Back, Delete, Find };
 
@@ -990,13 +993,16 @@ Then sessionsMenu() {
   int row = 0;
   String query;
   bool typing = false;
+  std::vector<String> inside;  // chats whose prompts or replies match `insideFor`; filled when Enter ends typing
+  String insideFor;
   sessions::Listing found = sdOk ? sessions::list(kMaxSessions) : sessions::Listing();
   while (true) {
     const time_t now = timeOk ? time(nullptr) : 0;
     std::vector<const sessions::Meta*> shown;
     std::vector<ui::MenuItem> items;
     for (const sessions::Meta& m : found.items) {
-      if (!sessions::matches(titleOf(m), query)) continue;
+      const bool deep = query.length() && insideFor == query && std::find(inside.begin(), inside.end(), m.id) != inside.end();
+      if (!sessions::matches(titleOf(m), query) && !deep) continue;
       shown.push_back(&m);
       items.push_back({titleOf(m), sessions::when(m.created, now) + (m.id == session.id ? " *" : "")});
     }
@@ -1011,8 +1017,17 @@ Then sessionsMenu() {
           delay(5);
           continue;
         }
-        if (st->enter) typing = false;
-        else if (st->esc) {
+        if (st->enter) {
+          typing = false;
+          if (query.length() && insideFor != query) {  // titles filter as you type; the chats themselves are read once, here
+            menu.notice("Searching inside chats...", ui::SYS);
+            inside.clear();
+            for (const sessions::Meta& m : found.items) {
+              if (!sessions::matches(titleOf(m), query) && sessions::contains(m.id, query)) inside.push_back(m.id);
+            }
+            insideFor = query;
+          }
+        } else if (st->esc) {
           query = "";
           typing = false;
         } else if (st->backspace || st->del) {
@@ -1588,7 +1603,6 @@ const MainRow kMainMenu[] = {
     {"Wi-Fi", []() -> String { return WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String("offline"); },
      inChat<changeWifi>, nullptr, "Enter scans for networks   Del back"},
     {"Setup from phone", nullptr, setupFromPhone, nullptr, "Enter: Wi-Fi and keys from a phone"},
-    {"Mic test", nullptr, inChat<micTest>, nullptr, nullptr},
     {"Device info", nullptr, inChat<showInfo>, nullptr, nullptr},
     {"Keys/help", nullptr, inChat<showHelp>, nullptr, nullptr},
 };
@@ -1683,6 +1697,7 @@ void setup() {
   } else if (moved == Migration::Failed) {
     view.add(String("Couldn't rename ") + brand::kOldDataDir + " to " DATA_DIR " on the SD card.", ui::ERR);
   }
+  if (sdOk) historyBytes = prompts::load(promptHistory);
   if (!micOk) view.add("Mic failed to start: " + micErr, ui::ERR);
   if (!sdOk) view.add("No SD card: voice and saved chats need one.", ui::SYS);
   loadSettings();
@@ -1737,7 +1752,7 @@ void loop() {
   if (ev.enter) {
     String line = input;
     line.trim();
-    promptHistory.add(line);
+    if (promptHistory.add(line) && sdOk) prompts::append(promptHistory, line, historyBytes);
     input = "";
     view.setInput(input);
     if (line.startsWith("/")) handleCommand(line);

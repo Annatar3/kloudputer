@@ -1537,9 +1537,83 @@ static void testUsage() {
   CHECK(big.total == 4294967295u, "totals stop at the top instead of wrapping to zero");
 }
 
+static void testHistoryFile() {
+  SD.reset();
+  SD.dirs.insert(DATA_DIR);
+  prompts::History h;
+  size_t bytes = prompts::load(h);
+  CHECK(bytes == 0 && h.size() == 0, "no file, no history");
+  for (const char* line : {"first", "second one", "/pair X cp1-secret", "second one", "third"}) {
+    if (h.add(line)) CHECK(prompts::append(h, line, bytes), "appended %s", line);
+  }
+  const auto& file = SD.files[String(prompts::kPath).str()];
+  CHECK(std::string(file.begin(), file.end()) == "first\nsecond one\nthird\n", "one prompt per line, no pairing code, no repeat");
+  CHECK(bytes == file.size(), "the running size matches the file");
+
+  prompts::History back;
+  CHECK(prompts::load(back) == file.size() && back.size() == 3, "reloaded after a restart");
+  String out;
+  CHECK(back.older("", out) && out == "third" && back.older("", out) && out == "second one", "newest first on Up");
+
+  prompts::History many;
+  size_t n = 0;
+  for (int i = 0; i < 100; ++i) {
+    const String line = String("prompt ") + String(i);
+    if (many.add(line)) prompts::append(many, line, n);
+  }
+  prompts::History kept;
+  prompts::load(kept);
+  CHECK(kept.size() == prompts::History::kMax, "only the newest %d come back", (int)prompts::History::kMax);
+  CHECK(kept.older("", out) && out == "prompt 99", "and they are the newest");
+
+  size_t nearFull = prompts::kMaxFileBytes - 3;
+  CHECK(many.add("one more") && prompts::append(many, "one more", nearFull), "a full file is rewritten");
+  CHECK(nearFull == many.serialize().length() && SD.files[String(prompts::kPath).str()].size() == nearFull, "down to what is remembered");
+  SD.readOnly = true;
+  size_t z = 0;
+  CHECK(!prompts::append(many, "x", z) && z == 0, "a refusing card reports failure");
+  SD.readOnly = false;
+}
+
+static void testSessionSearch() {
+  SD.reset();
+  SD.dirs.insert(DATA_DIR);
+  SD.dirs.insert(sessions::kDir);
+  sessions::Meta m;
+  m.id = "20261106-143205";
+  m.title = "Kubernetes deploy";
+  m.model = "claude-haiku-5-5";
+  String filler;
+  for (int i = 0; i < 60; ++i) filler += "lorem ipsum ";
+  CHECK(sessions::append(m, "how do I restart a pod?", filler + "use kubectl rollout RESTART on the Deployment"), "saved");
+  CHECK(sessions::append(m, "and the borscht recipe", "beets, cabbage, dill"), "saved again");
+  CHECK(sessions::contains(m.id, "restart"), "a word from a prompt");
+  CHECK(sessions::contains(m.id, "ROLLOUT deployment"), "words from a reply, any case");
+  CHECK(sessions::contains(m.id, "borscht kubectl"), "words from different turns");
+  CHECK(!sessions::contains(m.id, "restart pizza"), "every word has to be there");
+  CHECK(!sessions::contains(m.id, "kubernetes") && !sessions::contains(m.id, "haiku"), "the header line (title, model) is not searched");
+  CHECK(sessions::contains(m.id, "") && sessions::contains(m.id, "  "), "an empty query matches");
+  CHECK(!sessions::contains("20990101-000000", "restart"), "a missing chat matches nothing");
+  for (size_t pad = 0; pad < 300; ++pad) {  // the word lands on every position of the 256-byte read boundary
+    sessions::Meta p;
+    p.id = "20261107-000000";
+    SD.files.erase(String(sessions::pathOf(p.id)).str());
+    String lead;
+    for (size_t i = 0; i < pad; ++i) lead += 'x';
+    sessions::append(p, lead + " needle", "ok");
+    if (!sessions::contains(p.id, "needle")) {
+      CHECK(false, "missed the word when it straddles a read boundary (pad %u)", (unsigned)pad);
+      break;
+    }
+  }
+  CHECK(true, "boundary sweep done");
+}
+
 int main() {
   testChunks();
   testPromptHistory();
+  testHistoryFile();
+  testSessionSearch();
   testLanguage();
   testChatRequest();
   testChatReply();

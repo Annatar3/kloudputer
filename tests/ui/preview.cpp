@@ -118,7 +118,6 @@ static std::vector<ui::MenuItem> mainItems(const char* model = "Haiku 5.5") {
           {"Notes", "3 saved", "Enter lists them   Del back"},
           {"Wi-Fi", "HomeNet", "Enter scans for networks   Del back"},
           {"Setup from phone", "", "Enter: Wi-Fi and keys from a phone"},
-          {"Mic test", ""},
           {"Device info", ""},
           {"Keys/help", ""}};
 }
@@ -141,7 +140,7 @@ static std::vector<ui::MenuItem> modelItems() {
 
 constexpr const char* kNav = "Arrows move  Enter pick  Del back";
 constexpr const char* kSessionsHint = "Enter open  x delete  s find  Del back";
-constexpr const char* kFindHint = "Type to filter   Enter ok   Esc clear";
+constexpr const char* kFindHint = "Type: titles  Enter: inside chats too";
 
 // As main.cpp builds them: title (sessions::titleFrom of the first prompt), then sessions::when + current mark.
 static std::vector<ui::MenuItem> sessionItems() {
