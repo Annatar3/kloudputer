@@ -1,5 +1,5 @@
 // Kloudputer — Claude chat on the M5Stack Cardputer ADV, with push-to-talk voice and spoken answers.
-// Type or hold G0 and talk; Enter sends. Tab opens the menu. Fn+; / Fn+. scroll. Commands: /help.
+// Type or hold G0 and talk; Enter sends. Tab opens the menu. Fn+; / Fn+. recall earlier prompts, Fn+, / Fn+/ scroll. Commands: /help.
 #include <M5Cardputer.h>
 #include <Preferences.h>
 #include <SD.h>
@@ -9,13 +9,17 @@
 #include <vector>
 #include "agent_proto.h"
 #include "agent_relay.h"
+#include "approvals.h"
 #include "anthropic.h"
 #include "config.h"
 #include "keyboard_adv.h"
 #include "keycheck.h"
 #include "menu.h"
 #include "net.h"
+#include "notes.h"
 #include "portal.h"
+#include "power.h"
+#include "prompt_history.h"
 #include "sessions.h"
 #include "tts.h"
 #include "ui.h"
@@ -27,7 +31,7 @@ constexpr size_t kLoopStack = 16 * 1024;
 size_t getArduinoLoopTaskStackSize() { return kLoopStack; }
 
 namespace {
-constexpr const char* kVersion = "v1.7";
+constexpr const char* kVersion = "v1.8";
 constexpr float kSilentRms = 20;  // clip RMS (around its mean) below this is treated as silence
 constexpr size_t kMaxInput = 2000;
 constexpr size_t kMaxHistoryMsgs = 10;
@@ -61,6 +65,13 @@ Config cfg;
 std::vector<ChatMsg> history;
 PollingTCA8418Reader* kb = nullptr;
 String input;
+prompts::History promptHistory;
+int dictation = 0;  // index into lang::kLanguages
+power::ScreenSleep screenSleep;
+int sleepOption = power::kDefaultOption;  // index into power::kOptions
+uint8_t fullBrightness = 128;
+notes::Notes memory;  // what Claude was asked to remember, from the SD card
+bool webSearch = true;  // let Claude search the web; off for the session if the API refuses it
 int boardId = -1;
 bool sdOk = false;
 bool timeOk = false;
@@ -90,15 +101,31 @@ void startKeyboard() {
 // ---------- input ----------
 struct KeyEvent {
   bool enter = false, esc = false, tab = false, back = false, changed = false;
+  bool up = false, down = false, left = false, right = false;
   int scroll = 0;
 };
 
 // The keyboard state if a key just went down, else nullptr. Also refreshes button state (G0).
+void setBacklight(power::Level level) {
+  const uint8_t dim = std::max<int>(4, fullBrightness / 8);
+  M5Cardputer.Display.setBrightness(level == power::Level::Awake ? fullBrightness : level == power::Level::Dim ? dim : 0);
+}
+
+// Wakes the screen when something shows on it without a key press, like a reply arriving.
+void pokeScreen() {
+  const power::Step step = screenSleep.poke(millis(), power::kOptions[sleepOption].ms);
+  if (step.changed) setBacklight(step.level);
+}
+
 const Keyboard_Class::KeysState* nextKeys() {
   M5Cardputer.update();
   M5Cardputer.Keyboard.updateKeyList();
   M5Cardputer.Keyboard.updateKeysState();
-  if (!(M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed())) return nullptr;
+  const bool pressed = M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed();
+  const power::Step step =
+      screenSleep.tick(millis(), power::kOptions[sleepOption].ms, pressed || M5Cardputer.BtnA.isPressed());
+  if (step.changed) setBacklight(step.level);
+  if (!pressed || step.swallow) return nullptr;
   return &M5Cardputer.Keyboard.keysState();
 }
 
@@ -109,6 +136,10 @@ KeyEvent pollKeys(String& buf) {
   if (!st) return ev;
   if (st->up) ev.scroll = 3;
   if (st->down) ev.scroll = -3;
+  ev.up = st->up;
+  ev.down = st->down;
+  ev.left = st->left;
+  ev.right = st->right;
   if (st->esc) ev.esc = true;
   if (st->tab) ev.tab = true;
   if (st->backspace || st->del) {
@@ -199,6 +230,9 @@ void loadPrefs() {
     voice = p.getBool("voice", voice);
     if (const char* v = tts::findVoice(p.getString("vname", ""))) voiceName = v;
     volume = p.getUChar("vol", volume);
+    dictation = lang::indexOf(p.getString("lang", ""));
+    webSearch = p.getBool("web", webSearch);
+    sleepOption = power::optionFor(p.getUInt("sleep", power::kOptions[power::kDefaultOption].ms));
     p.end();
   }
   voiceReplies = voice && cfg.groqKey.length();
@@ -212,6 +246,7 @@ void loadSettings() {
   if (sdOk) loadConfig(cfg);
   loadPhone(cfg);
   loadPrefs();
+  if (sdOk) memory = notes::load();
   setenv("TZ", cfg.tz.c_str(), 1);  // dates in the Sessions list, before a clock sync sets it again
   tzset();
 }
@@ -408,8 +443,69 @@ void resume(const String& id) {
   }
 }
 
+void remember(const String& text) {
+  if (!sdOk) {
+    view.add("Notes need the SD card.", ui::ERR);
+    return;
+  }
+  notes::Notes next = memory;
+  switch (next.add(text)) {
+    case notes::Add::Empty: view.add("Remember what? Try: /remember my server is atlas", ui::SYS); return;
+    case notes::Add::Duplicate: view.add("Already noted.", ui::SYS); return;
+    case notes::Add::Full:
+      view.add("Notes are full (" + String(notes::kMaxNotes) + "). /forget one first.", ui::ERR);
+      return;
+    case notes::Add::Added: break;
+  }
+  if (!notes::save(next)) {
+    view.add("Couldn't write the note to the SD card.", ui::ERR);
+    return;
+  }
+  memory = next;
+  view.add("Noted (" + String(memory.items().size()) + " of " + String(notes::kMaxNotes) + ").", ui::GREEN);
+}
+
+void showNotes() {
+  if (memory.items().empty()) {
+    view.add("No notes. Say or type: remember that ...", ui::SYS);
+    return;
+  }
+  for (size_t i = 0; i < memory.items().size(); ++i) view.add(String(i + 1) + ") " + memory.items()[i], ui::DIM);
+  view.add("/forget N deletes one, /forget all clears", ui::DIM);
+}
+
+void forget(const String& arg) {
+  notes::Notes next = memory;
+  if (arg == "all") next.clear();
+  else if (!next.remove(arg.toInt())) {
+    view.add("Which one? /notes shows the numbers.", ui::SYS);
+    return;
+  }
+  if (!notes::save(next)) {
+    view.add("Couldn't write the SD card.", ui::ERR);
+    return;
+  }
+  memory = next;
+  view.add(arg == "all" ? String("All notes forgotten.") : String("Forgotten."), ui::GREEN);
+}
+
+// After a chat's first exchange, Haiku names it so the Sessions list reads better than the first prompt.
+// Quiet on failure: the first-prompt title stays.
+void nameSession(const String& prompt, const String& reply) {
+  if (!sdOk || session.id.isEmpty()) return;
+  const String title = sessions::cleanTitle(claudeTitle(cfg.anthropicKey, prompt, reply));
+  if (title.isEmpty() || !sessions::retitle(session.id, title)) return;
+  session.title = title;
+  Serial.printf("[chat] titled '%s'\n", title.c_str());
+}
+
 void sendPrompt(const String& text) {
   view.addUser(text);
+  String note;
+  if (notes::rememberText(text, note)) {
+    remember(note);
+    return;
+  }
   if (cfg.anthropicKey.isEmpty()) {
     view.add("No Anthropic API key yet. Type /setup to add one from your phone.", ui::ERR);
     return;
@@ -423,20 +519,33 @@ void sendPrompt(const String& text) {
   view.thinking();
   Serial.printf("[chat] -> %u chars, %u msgs, heap=%u maxblk=%u\n", text.length(), history.size(),
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-  const ChatResult r = anthropicChat(cfg.anthropicKey, cfg.model, history, voiceReplies);
-  Serial.printf("[chat] <- ok=%d %ums in=%d out=%d heap=%u err=%s\n", r.ok, r.ms, r.inTok, r.outTok,
-                ESP.getFreeHeap(), r.error.c_str());
+  RequestOptions opts;
+  opts.spoken = voiceReplies;
+  opts.webSearch = webSearch;
+  opts.notes = memory.joined();
+  const ChatResult r = anthropicChat(cfg.anthropicKey, cfg.model, history, opts);
+  Serial.printf("[chat] <- ok=%d %ums in=%d out=%d searches=%d heap=%u err=%s\n", r.ok, r.ms, r.inTok, r.outTok,
+                r.searches, ESP.getFreeHeap(), r.error.c_str());
+  if (r.searchBlocked) {
+    webSearch = false;
+    view.add("Web search isn't available for this key, so it is off. Enable it in the Anthropic Console.", ui::SYS);
+  }
   if (r.ok) {
     history.push_back({false, r.text});
     view.addClaude(r.text);
+    const bool firstTurn = session.id.isEmpty();
     saveTurn(text, r.text);
     if (voiceReplies) speak(r.text);
-    header.setNote(String(r.ms / 100 / 10.0, 1) + "s " + r.inTok + "/" + r.outTok + " tok", ui::DIM);
+    if (firstTurn) nameSession(text, r.text);
+    header.setNote(String(r.ms / 100 / 10.0, 1) + "s " + r.inTok + "/" + r.outTok + " tok" +
+                       (r.searches ? " " + String(r.searches) + " web" : String()),
+                   ui::DIM);
   } else {
     history.pop_back();  // keep user/assistant turns paired
     view.add(r.error, ui::ERR);
     refreshHeader();
   }
+  pokeScreen();
   lastHeaderMs = millis();
 }
 
@@ -492,6 +601,7 @@ void doVoice(ui::ChatView& v, String& buf) {
     return;
   }
   v.setInput("", "(recording - release G0) ");
+  pokeScreen();
   const voice::Recording rec = voice::record(
       [] {
         M5Cardputer.update();
@@ -516,7 +626,7 @@ void doVoice(ui::ChatView& v, String& buf) {
   }
   header.setNote("level " + String(rec.rms, 0) + " - transcribing...", ui::SYS);
   v.setInput("", "... ");
-  const voice::Transcript t = voice::transcribe(cfg.groqKey);
+  const voice::Transcript t = voice::transcribe(cfg.groqKey, lang::kLanguages[dictation].code);
   Serial.printf("[voice] stt ok=%d %ums text=%s err=%s heap=%u\n", t.ok, t.ms, t.text.c_str(), t.error.c_str(),
                 ESP.getFreeHeap());
   lastHeaderMs = millis();
@@ -535,6 +645,7 @@ void doVoice(ui::ChatView& v, String& buf) {
   if (buf.length()) buf += ' ';
   buf += t.text;
   v.setInput(buf);
+  pokeScreen();
   header.setNote("heard " + String(rec.ms / 1000.0, 1) + "s L" + String(rec.rmsL, 0) + " R" +
                      String(rec.rmsR, 0) + " - Enter",
                  ui::GREEN);
@@ -544,12 +655,15 @@ void doVoice(ui::ChatView& v, String& buf) {
 void showHelp() {
   view.add("Type or hold G0 to talk. Enter sends.", ui::DIM);
   view.add("Tab    menu: sessions, voice, model", ui::DIM);
-  view.add("Fn+; / Fn+.  scroll   Fn+`  clear", ui::DIM);
+  view.add("Fn+; Fn+.  earlier prompts", ui::DIM);
+  view.add("Fn+, Fn+/  scroll   Fn+`  clear", ui::DIM);
   view.add("Menus: ; . move  , / change  Del back", ui::DIM);
   view.add("/new    start a fresh conversation", ui::DIM);
   view.add("/sessions  saved chats (x deletes)", ui::DIM);
   view.add("/setup  Wi-Fi + keys from a phone", ui::DIM);
   view.add("/pair NAME CODE  pair an agent", ui::DIM);
+  view.add("/remember X  or say: remember that X", ui::DIM);
+  view.add("/notes  list    /forget N|all", ui::DIM);
   view.add("/model  Haiku, Sonnet, Opus or Fable", ui::DIM);
   view.add("/wifi   pick a different network", ui::DIM);
   view.add("/info   device + connection details", ui::DIM);
@@ -677,9 +791,10 @@ void showInfo() {
 
 // ---------- menus ----------
 constexpr const char* kNavHint = "Arrows move  Enter pick  Del back";
-constexpr const char* kSessionsHint = "Enter resume   x delete   Del back";
+constexpr const char* kSessionsHint = "Enter open  x delete  s find  Del back";
+constexpr const char* kFindHint = "Type to filter   Enter ok   Esc clear";
 
-enum class Nav : uint8_t { None, Up, Down, Left, Right, Pick, Back, Delete };
+enum class Nav : uint8_t { None, Up, Down, Left, Right, Pick, Back, Delete, Find };
 
 bool typed(const Keyboard_Class::KeysState& st, char c) {
   return std::find(st.word.begin(), st.word.end(), c) != st.word.end();
@@ -696,6 +811,7 @@ Nav readNav() {
   if (st->enter) return Nav::Pick;
   if (st->backspace || st->del || st->tab || st->esc || typed(*st, '`')) return Nav::Back;
   if (typed(*st, 'x') || typed(*st, 'X')) return Nav::Delete;
+  if (typed(*st, 's') || typed(*st, 'S')) return Nav::Find;
   return Nav::None;
 }
 
@@ -713,7 +829,7 @@ Choice navigate(void (*adjust)(int row, int dir) = nullptr, bool deletes = false
       case Nav::Down: menu.move(1); break;
       case Nav::Left: if (adjust) adjust(menu.selected(), -1); break;
       case Nav::Right: if (adjust) adjust(menu.selected(), 1); break;
-      case Nav::Delete: if (deletes) return {nav, menu.selected()}; break;
+      case Nav::Delete: case Nav::Find: if (deletes) return {nav, menu.selected()}; break;
       case Nav::Pick: case Nav::Back: return {nav, menu.selected()};
       case Nav::None: break;
     }
@@ -800,23 +916,68 @@ bool confirmDelete() {
   }
 }
 
-// Saved chats, newest first. Enter resumes one (rebuilt while the menu still has the screen).
+// Saved chats, newest first. Enter resumes one (rebuilt while the menu still has the screen). The s key
+// filters the list by words in the titles; Enter keeps the filter and Del or Esc clears it.
 Then sessionsMenu() {
   int row = 0;
+  String query;
+  bool typing = false;
+  sessions::Listing found = sdOk ? sessions::list(kMaxSessions) : sessions::Listing();
   while (true) {
-    const sessions::Listing found = sdOk ? sessions::list(kMaxSessions) : sessions::Listing();
     const time_t now = timeOk ? time(nullptr) : 0;
+    std::vector<const sessions::Meta*> shown;
     std::vector<ui::MenuItem> items;
     for (const sessions::Meta& m : found.items) {
+      if (!sessions::matches(titleOf(m), query)) continue;
+      shown.push_back(&m);
       items.push_back({titleOf(m), sessions::when(m.created, now) + (m.id == session.id ? " *" : "")});
     }
-    if (items.empty()) items.push_back({sdOk ? "No saved chats yet" : "No SD card", ""});
-    showMenu("Sessions", std::move(items), row, kSessionsHint);
+    if (items.empty()) items.push_back({!sdOk ? "No SD card" : query.length() ? "Nothing matches" : "No saved chats yet", ""});
+    const String title = typing ? "Find: " + query + "_" : query.length() ? "Sessions: " + query : String("Sessions");
+    showMenu(title.c_str(), std::move(items), row, typing ? kFindHint : kSessionsHint);
+
+    if (typing) {
+      while (true) {
+        const auto* st = nextKeys();
+        if (!st) {
+          delay(5);
+          continue;
+        }
+        if (st->enter) typing = false;
+        else if (st->esc) {
+          query = "";
+          typing = false;
+        } else if (st->backspace || st->del) {
+          if (query.length()) query.remove(query.length() - 1);
+          else typing = false;
+        } else if (!st->fn) {
+          for (char c : st->word) {
+            if (query.length() < 24) query += c;
+          }
+        } else {
+          continue;
+        }
+        break;
+      }
+      row = 0;
+      continue;
+    }
+
     while (true) {
       const Choice c = navigate(nullptr, true);
-      if (c.nav == Nav::Back) return {};
-      if (found.items.empty()) continue;
-      const sessions::Meta& m = found.items[c.row];
+      if (c.nav == Nav::Back) {
+        if (query.isEmpty()) return {};
+        query = "";
+        row = 0;
+        break;
+      }
+      if (c.nav == Nav::Find) {
+        typing = true;
+        row = 0;
+        break;
+      }
+      if (shown.empty()) continue;
+      const sessions::Meta& m = *shown[c.row];
       if (c.nav == Nav::Pick) {
         resume(m.id);
         return kToChat;
@@ -828,6 +989,7 @@ Then sessionsMenu() {
       } else {
         view.add("Couldn't delete " + titleOf(m), ui::ERR);
       }
+      found = sessions::list(kMaxSessions);
       row = c.row;
       break;
     }
@@ -937,6 +1099,8 @@ struct AgentLink {
   AgentState state = AgentState::Connecting;
   bool cancelArmed = false;
   bool reported = false;
+  approvals::Queue asks;  // permission requests waiting for y or n
+  bool prompting = false;      // the front request is on screen
 };
 
 bool sendUp(AgentLink& a, agent::Kind kind, const String& job, uint32_t n, const String& text = String()) {
@@ -956,6 +1120,63 @@ void showReport(AgentLink& a) {
     a.relay.pause();  // speech opens its own TLS session; one at a time
     speak(text, agentView);
   }
+}
+
+// Two short rising tones, so a request gets noticed from a pocket or across a desk.
+void beep() {
+  constexpr int kFrames = adv_audio::kRate * 140 / 1000;
+  static int16_t tone[2 * kFrames];
+  for (int i = 0; i < kFrames; ++i) {
+    const float hz = i < kFrames / 2 ? 880.0f : 1320.0f;
+    const float fade = std::min(1.0f, std::min(i % (kFrames / 2), kFrames / 2 - i % (kFrames / 2)) / 60.0f);
+    const int16_t v = static_cast<int16_t>(9000 * fade * sinf(2.0f * PI * hz * i / adv_audio::kRate));
+    tone[2 * i] = tone[2 * i + 1] = v;
+  }
+  adv_audio::unmute();
+  adv_audio::write(tone, sizeof tone);
+  adv_audio::drain();
+  adv_audio::mute();
+}
+
+bool sendApprove(AgentLink& a, const String& req, bool allow) {
+  const String body = agent::seal(a.keys.keyUp, a.keys.topicUp, agent::buildApprove(a.job, ++a.n, time(nullptr), req, allow));
+  return body.length() && a.relay.publish(a.keys.topicUp, body);
+}
+
+// Puts the oldest waiting request on screen and asks for y or n.
+void showApproval(AgentLink& a) {
+  const approvals::Pending& p = a.asks.front();
+  agentView.add(a.entry.name + " wants to use " + p.tool + ":", ui::SYS);
+  agentView.add(p.detail.length() ? p.detail : String("(no details)"), ui::GREEN);
+  if (a.asks.size() > 1) agentView.add(String(static_cast<int>(a.asks.size()) - 1) + " more waiting.", ui::DIM);
+  agentView.setInput("", "allow? y/n > ");
+  a.prompting = true;
+  pokeScreen();
+  beep();
+}
+
+// Back to the normal prompt, or on to the next request.
+void nextApproval(AgentLink& a) {
+  a.prompting = false;
+  if (a.asks.empty()) agentView.setInput(agentInput);
+  else showApproval(a);
+}
+
+void answerApproval(AgentLink& a, bool allow) {
+  const approvals::Pending p = a.asks.pop();
+  const bool sent = sendApprove(a, p.req, allow);
+  agentView.add(allow ? "Allowed: " + p.tool : "Denied: " + p.tool, allow ? ui::GREEN : ui::DIM);
+  if (!sent) agentView.add("Couldn't send that; it will time out as denied.", ui::ERR);
+  nextApproval(a);
+}
+
+// Everything still waiting is denied, for when the job ends or the screen closes. Best effort: the connector
+// denies it anyway after five minutes.
+void denyAllApprovals(AgentLink& a, bool tell) {
+  for (const approvals::Pending& p : a.asks.takeAll()) {
+    if (tell) sendApprove(a, p.req, false);
+  }
+  a.prompting = false;
 }
 
 // One message off the relay. Anything that fails a check is dropped silently, as the protocol says.
@@ -981,15 +1202,25 @@ void onAgentMessage(AgentLink& a, const String& body) {
     case agent::Kind::Step:
       agentView.placeholder(m.text, ui::DIM, false);
       break;
-    case agent::Kind::Approval:  // answering approvals from here is phase B
-      agentView.add(a.entry.name + " asks to use " + m.tool + ": " + m.detail +
-                        ". Approving from the Cardputer comes later; unanswered, it's denied in 5 minutes.",
-                    ui::SYS);
+    case agent::Kind::Approval:
+      if (a.state != AgentState::Working) break;  // the job is over; nothing is waiting on an answer
+      switch (a.asks.add(m.req, m.tool, m.detail, millis())) {
+        case approvals::Queue::Add::Kept:
+          if (!a.prompting) showApproval(a);
+          break;
+        case approvals::Queue::Add::Full:
+          sendApprove(a, m.req, false);  // more than can be shown; refuse it rather than leave it hanging
+          break;
+        default:
+          break;
+      }
       break;
     case agent::Kind::Part:
       if (a.report.add(m.i, m.of, m.text) && a.report.complete() && !a.reported) showReport(a);
       break;
     case agent::Kind::Done:
+      denyAllApprovals(a, false);
+      agentView.setInput(agentInput);
       if (!a.reported && a.report.have()) {
         agentView.add("Only " + String(a.report.have()) + " of " + String(a.report.of()) + " report parts arrived:", ui::SYS);
         showReport(a);
@@ -1000,6 +1231,8 @@ void onAgentMessage(AgentLink& a, const String& body) {
                     m.ok ? ui::DIM : ui::SYS);
       break;
     case agent::Kind::Error:
+      denyAllApprovals(a, false);
+      agentView.setInput(agentInput);
       agentView.add(m.text, ui::ERR);
       a.state = AgentState::Error;
       break;
@@ -1044,14 +1277,29 @@ void agentScreen(const AgentEntry& entry) {
     for (String body; a.relay.poll(body);) onAgentMessage(a, body);
     const bool waiting = a.relay.state() == agent::Relay::State::Waiting;
     const AgentState shown = waiting ? AgentState::Offline : a.state;
-    const String note = waiting ? "offline: " + a.relay.error() : String(stateName(shown));
+    if (const size_t lapsed = a.asks.expire(millis())) {
+      agentView.add(String(static_cast<int>(lapsed)) + " request(s) timed out, so they were denied.", ui::SYS);
+      nextApproval(a);
+    }
+    const String note = a.prompting ? String("ALLOW? y / n") : waiting ? "offline: " + a.relay.error() : String(stateName(shown));
     if (note != noteShown) {
       noteShown = note;
-      header.setNote(note, stateColor(shown));
+      header.setNote(note, a.prompting ? ui::ERR : stateColor(shown));
     }
 
+    // While a request is on screen the keys answer it, so nothing typed lands in the task line.
+    String answerKeys;
     const bool wasEmpty = agentInput.isEmpty();
-    const KeyEvent ev = pollKeys(agentInput);
+    const KeyEvent ev = pollKeys(a.prompting ? answerKeys : agentInput);
+    if (a.prompting) {
+      approvals::Answer answer = approvals::answerFrom(answerKeys);
+      if (answer == approvals::Answer::None && ev.esc) answer = approvals::Answer::Deny;
+      if (answer != approvals::Answer::None) answerApproval(a, answer == approvals::Answer::Allow);
+      if (ev.scroll) agentView.scroll(ev.scroll);
+      if (ev.tab) break;
+      delay(5);
+      continue;
+    }
     if (M5Cardputer.BtnA.wasPressed()) {
       a.relay.pause();  // Whisper needs TLS too; one session at a time
       doVoice(agentView, agentInput);
@@ -1083,6 +1331,7 @@ void agentScreen(const AgentEntry& entry) {
       } else if (paired && a.relay.state() != agent::Relay::State::Off) {
         a.job = agent::newJobId();
         a.n = 0;
+        denyAllApprovals(a, false);
         a.report.reset();
         a.reported = false;
         agentView.addUser(text);
@@ -1097,6 +1346,7 @@ void agentScreen(const AgentEntry& entry) {
     }
     delay(5);
   }
+  denyAllApprovals(a, true);
   a.relay.stop();
   agentView.hide();
 }
@@ -1171,9 +1421,41 @@ const MainRow kMainMenu[] = {
        return voiceReplies ? "on - " + String(voiceName) : String("off");
      },
      inMenu<voiceMenu>, nullptr, nullptr},
+    {"Dictation", []() -> String { return String("< ") + lang::kLanguages[dictation].name + " >"; }, nullptr,
+     [](int dir) {
+       dictation = lang::step(dictation, dir);
+       Preferences p;
+       if (p.begin("cputer", false)) {
+         p.putString("lang", lang::kLanguages[dictation].code);
+         p.end();
+       }
+     },
+     "Left/right: language   Del back"},
+    {"Web search", []() -> String { return String("< ") + (webSearch ? "on" : "off") + " >"; }, nullptr,
+     [](int) {
+       webSearch = !webSearch;
+       Preferences p;
+       if (p.begin("cputer", false)) {
+         p.putBool("web", webSearch);
+         p.end();
+       }
+     },
+     "Left/right: on or off   Del back"},
+    {"Screen sleep", []() -> String { return String("< ") + power::kOptions[sleepOption].name + " >"; }, nullptr,
+     [](int dir) {
+       sleepOption = power::stepOption(sleepOption, dir);
+       Preferences p;
+       if (p.begin("cputer", false)) {
+         p.putUInt("sleep", power::kOptions[sleepOption].ms);
+         p.end();
+       }
+     },
+     "Left/right: dim then off   Del back"},
     {"Volume", []() -> String { return "< " + String(volume) + " >"; }, nullptr,
      [](int dir) { applyVolume(std::min(std::max(volume + dir, 1), 10)); }, "Left / right change it   Del back"},
     {"Model", []() -> String { return modelName(cfg.model); }, inMenu<modelMenu>, nullptr, nullptr},
+    {"Notes", []() -> String { return String(memory.items().size()) + " saved"; }, inChat<showNotes>, nullptr,
+     "Enter lists them   Del back"},
     {"Wi-Fi", []() -> String { return WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String("offline"); },
      inChat<changeWifi>, nullptr, "Enter scans for networks   Del back"},
     {"Setup from phone", nullptr, setupFromPhone, nullptr, "Enter: Wi-Fi and keys from a phone"},
@@ -1234,6 +1516,9 @@ void handleCommand(const String& line) {
   else if (cmd == "/sessions") openMenu(sessionsMenu);
   else if (cmd == "/setup") openMenu(setupFromPhone);
   else if (cmd == "/pair") pairCommand(arg);
+  else if (cmd == "/remember") remember(arg);
+  else if (cmd == "/notes") showNotes();
+  else if (cmd == "/forget") forget(arg);
   else view.add("Unknown command. /help", ui::ERR);
 }
 }  // namespace
@@ -1248,6 +1533,7 @@ void setup() {
   Serial.begin(115200);
   auto& display = M5Cardputer.Display;
   display.setRotation(1);
+  fullBrightness = display.getBrightness() >= 16 ? display.getBrightness() : 128;
   header.begin(display);
   view.begin(display);
   agentView.begin(display);
@@ -1301,15 +1587,28 @@ void loop() {
   const KeyEvent ev = pollKeys(input);  // also updates button state
   if (M5Cardputer.BtnA.wasPressed()) doVoice(view, input);
   if (ev.tab) openMenu(mainMenu);
-  if (ev.scroll) view.scroll(ev.scroll);
+  if (ev.left) view.scroll(3);
+  if (ev.right) view.scroll(-3);
+  if (ev.up || ev.down) {
+    String recalled;
+    if (ev.up ? promptHistory.older(input, recalled) : promptHistory.newer(recalled)) {
+      input = recalled;
+      view.setInput(input);
+    }
+  }
   if (ev.esc && input.length()) {
+    promptHistory.stop();
     input = "";
     view.setInput(input);
   }
-  if (ev.changed) view.setInput(input);
+  if (ev.changed) {
+    promptHistory.stop();
+    view.setInput(input);
+  }
   if (ev.enter) {
     String line = input;
     line.trim();
+    promptHistory.add(line);
     input = "";
     view.setInput(input);
     if (line.startsWith("/")) handleCommand(line);

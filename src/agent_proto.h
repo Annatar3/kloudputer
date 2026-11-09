@@ -192,6 +192,19 @@ inline String buildUp(Kind kind, const String& job, uint32_t n, uint32_t ts, con
   return toJson(doc);
 }
 
+// The owner's answer to an approval request.
+inline String buildApprove(const String& job, uint32_t n, uint32_t ts, const String& req, bool allow) {
+  JsonDocument doc;
+  doc["v"] = 1;
+  doc["k"] = kindName(Kind::Approve);
+  doc["j"] = job.c_str();
+  doc["n"] = n;
+  doc["ts"] = ts;
+  doc["req"] = req.c_str();
+  doc["allow"] = allow;
+  return toJson(doc);
+}
+
 // False for anything that isn't a v1 message of a known kind with its common fields.
 inline bool parse(const String& plain, Message& m) {
   JsonDocument doc;

@@ -10,6 +10,7 @@
 #include "audio_adv.h"
 #include "brand.h"
 #include "certs.h"
+#include "language.h"
 
 namespace voice {
 constexpr uint32_t kRate = 16000;
@@ -147,7 +148,7 @@ struct Transcript {
 };
 
 // Uploads the recording as multipart/form-data, streaming the WAV from SD in 2 KB pieces.
-inline Transcript transcribe(const String& groqKey) {
+inline Transcript transcribe(const String& groqKey, const String& language) {
   Transcript t;
   const uint32_t t0 = millis();
   File f = SD.open(kPath, FILE_READ);
@@ -158,6 +159,7 @@ inline Transcript transcribe(const String& groqKey) {
   const size_t fileSize = f.size();
   const String b = "kloudputer8f3a2c";
   const String pre = "--" + b + "\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n" +
+                     lang::formField(b, language) +
                      "--" + b + "\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n" +
                      "--" + b + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"rec.wav\"\r\n" +
                      "Content-Type: audio/wav\r\n\r\n";

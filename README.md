@@ -12,11 +12,20 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 - **Voice in.** Hold G0, speak, and release. The speech is transcribed with Groq's Whisper (a free Groq key).
 - **Voice out.** Answers are read aloud, with six voices to choose from. This uses Groq's text-to-speech.
 - **Saved conversations.** Every chat is saved to the SD card, so you can resume or delete it later.
+- **Web search.** Claude can look up current facts when a question needs them (on by default, switch it in the menu).
+  Your Anthropic organization must allow web search, or Kloudputer turns it off for the session.
+- **Notes.** Say or type "remember that my server is atlas" (or `/remember ...`), and Claude knows it in every chat.
+  `/notes` lists them and `/forget N` removes one. They live in `kloudputer/notes.txt` on the SD card.
+- **Prompt history.** Fn+; and Fn+. recall what you sent before, like Claude Code. Fn+, and Fn+/ scroll.
+- **Tidy chat list.** Each chat is named after its first exchange, and `s` in Sessions filters the list by title.
+- **Dictation language.** Pick the language you speak from the menu, or leave it on Auto.
+- **Screen sleep.** The screen dims, then turns off after the idle time you choose.
 - **Setup from your phone.** Scan a QR code, and a setup page opens where you paste your keys and pick Wi-Fi.
   Tested on iPhone and Android.
 - **A menu for everything.** Press Tab for voice, volume, model, Wi-Fi, sessions and device info.
 - **Agents (beta).** Pair the Cardputer with your own Claude Code agent, send it tasks by text or voice, and
-  watch its progress and report. The traffic goes end-to-end encrypted through an ntfy relay (ntfy.sh, or your own).
+  watch its progress and report. When it wants to do something its settings don't allow, the Cardputer shows exactly
+  what and you press y or n. The traffic goes end-to-end encrypted through an ntfy relay (ntfy.sh, or your own).
   The agent side is one Node file with no dependencies. See [connector/README.md](connector/README.md) and the
   [protocol](connector/PROTOCOL.md).
 

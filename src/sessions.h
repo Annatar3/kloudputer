@@ -318,4 +318,76 @@ inline bool append(const Meta& m, const String& prompt, const String& reply) {
 }
 
 inline bool remove(const String& id) { return SD.remove(pathOf(id)); }
+
+// A model-written title as one tidy line: first line only, no surrounding quotes or closing punctuation.
+inline String cleanTitle(const String& raw) {
+  String t = raw;
+  const int nl = t.indexOf('\n');
+  if (nl >= 0) t = t.substring(0, nl);
+  t = titleFrom(t);
+  auto edge = [](char c) { return c == '"' || c == '\'' || c == '`' || c == '*' || c == '#' || c == ' '; };
+  while (t.length() && edge(t[0])) t.remove(0, 1);
+  while (t.length() && (edge(t[t.length() - 1]) || t[t.length() - 1] == '.' || t[t.length() - 1] == '!')) {
+    t.remove(t.length() - 1);
+  }
+  return t;
+}
+
+constexpr size_t kMaxRetitleBytes = 24 * 1024;
+
+// Replaces the title in a session's first line. Meant for right after the first exchange, when the file
+// is small; a bigger one is left alone. The new file is written beside the old and swapped in.
+inline bool retitle(const String& id, const String& title) {
+  const String path = pathOf(id);
+  File in = SD.open(path, FILE_READ);
+  if (!in) return false;
+  if (in.size() > kMaxRetitleBytes) {
+    in.close();
+    return false;
+  }
+  String all;
+  uint8_t chunk[256];
+  for (size_t n = in.read(chunk, sizeof chunk); n > 0; n = in.read(chunk, sizeof chunk)) {
+    all.concat(reinterpret_cast<const char*>(chunk), n);
+  }
+  in.close();
+  const int nl = all.indexOf('\n');
+  if (nl < 0 || static_cast<size_t>(nl) > kMaxHeader) return false;
+  JsonDocument header;
+  if (deserializeJson(header, all.c_str(), nl)) return false;
+  header["title"] = title.c_str();
+  String out;
+  serializeJson(header, out);
+  out += all.substring(nl);
+
+  const String tmp = path + ".tmp";
+  SD.remove(tmp);
+  File f = SD.open(tmp, FILE_WRITE);
+  if (!f) return false;
+  const bool wrote = f.write(reinterpret_cast<const uint8_t*>(out.c_str()), out.length()) == out.length();
+  f.close();
+  if (!wrote) {
+    SD.remove(tmp);
+    return false;
+  }
+  SD.remove(path);
+  return SD.rename(tmp, path);
+}
+
+// Every word of the query appears in the title, ignoring case. An empty query matches everything.
+inline bool matches(const String& title, const String& query) {
+  String hay = title;
+  hay.toLowerCase();
+  String q = query;
+  q.toLowerCase();
+  int from = 0;
+  while (from < static_cast<int>(q.length())) {
+    int sp = q.indexOf(' ', from);
+    if (sp < 0) sp = q.length();
+    const String word = q.substring(from, sp);
+    from = sp + 1;
+    if (word.length() && hay.indexOf(word) < 0) return false;
+  }
+  return true;
+}
 }  // namespace sessions

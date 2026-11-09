@@ -94,7 +94,7 @@ class Header {
 };
 
 // The conversation: your lines carry an orange ">", the first line of each Claude reply a small mark,
-// notes (status, errors, help) just their color. Older lines scroll back with Fn+; / Fn+.
+// notes (status, errors, help) just their color. Older lines scroll back with Fn+, / Fn+/
 class ChatView {
  public:
   explicit ChatView(Header& header) : header_(header) {}
