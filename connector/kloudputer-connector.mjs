@@ -654,16 +654,19 @@ export function loadConfig(file) {
 
 const CHAT_PROMPT = 'You are replying on a 40-column Cardputer screen. Be concise, plain ASCII, no markdown or emoji.';
 
+const ACT_PROMPT = 'Your final answer is read aloud by a voice assistant: reply in one to three short plain sentences, no markdown, lists or code.';
+
 const USAGE = `usage:
   kloudputer-connector.mjs pair --secret <file> [--force]   create the secret and print the pairing code
   kloudputer-connector.mjs code --secret <file>             print the pairing code again
   kloudputer-connector.mjs run --config <file.json>         serve the paired Cardputer
-  kloudputer-connector.mjs chat                              zero-setup chat through the logged-in claude CLI`;
+  kloudputer-connector.mjs chat [--act]                      zero-setup chat through the logged-in claude CLI;
+                                                             --act lets it use tools, for a voice assistant's tasks`;
 
 export async function main(args) {
   const { positionals, values } = parseArgs({
     args, allowPositionals: true,
-    options: { secret: { type: 'string' }, config: { type: 'string' }, force: { type: 'boolean', default: false } },
+    options: { secret: { type: 'string' }, config: { type: 'string' }, force: { type: 'boolean', default: false }, act: { type: 'boolean', default: false } },
   });
   const [command] = positionals;
   const need = name => {
@@ -694,11 +697,15 @@ export async function main(args) {
       const secret = readSecret(secretFile);
       console.error('Paste this code into the Cardputer setup page, under Claude Pro. Anyone holding it can use this agent.');
       console.log(pairingCode(secret));
+      // --act: tasks from a voice assistant. Tools stay on (what Claude Code's own permissions allow), every task
+      // is independent, and the final answer is written to be read aloud.
+      const command = values.act
+        ? ['claude', '-p', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', ACT_PROMPT, '--', '{prompt}']
+        : ['claude', '-p', '--continue', '--output-format', 'stream-json', '--verbose', '--tools', '',
+          '--append-system-prompt', CHAT_PROMPT, '--', '{prompt}'];
       const connector = new Connector({
-        relay: 'https://ntfy.sh', name: 'Claude', secret, env: {}, maxJobSecs: 300,
-        cwd: join(dir, 'workspace'), stateFile: join(dir, 'state.json'),
-        command: ['claude', '-p', '--continue', '--output-format', 'stream-json', '--verbose', '--tools', '',
-          '--append-system-prompt', CHAT_PROMPT, '--', '{prompt}'],
+        relay: 'https://ntfy.sh', name: 'Claude', secret, env: {}, maxJobSecs: values.act ? 280 : 300,
+        cwd: join(dir, 'workspace'), stateFile: join(dir, 'state.json'), command,
       });
       for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => connector.stop());
       await connector.start();
