@@ -45,7 +45,7 @@ void micTest() {
 // Hold G0 to talk into `v`'s input line, `buf`; the transcript can be fixed there before Enter.
 void doVoice(ui::ChatView& v, String& buf) {
   const RelayHold hold;
-  if (cfg.groqKey.isEmpty()) {
+  if (!haveVoiceKey()) {
     v.add("Voice needs a Groq or Gemini key. Type /setup to add one.", ui::ERR);
     return;
   }
@@ -79,9 +79,19 @@ void doVoice(ui::ChatView& v, String& buf) {
   }
   header.setNote("level " + String(rec.rms, 0) + " - transcribing...", ui::SYS);
   v.setInput("", "... ");
-  const voice::Transcript t = voice::transcribe(cfg.groqKey, lang::kLanguages[dictation].code);
-  Serial.printf("[voice] stt ok=%d %ums text=%s err=%s heap=%u\n", t.ok, t.ms, t.text.c_str(), t.error.c_str(),
-                ESP.getFreeHeap());
+  const voicepick::Plan plan = voicePlan();
+  voice::Transcript t = voice::transcribe(voiceKey(plan.first), lang::kLanguages[dictation].code);
+  Serial.printf("[voice] stt %s ok=%d http=%d %ums text=%s err=%s heap=%u\n", voicepick::name(plan.first), t.ok, t.status,
+                t.ms, t.text.c_str(), t.error.c_str(), ESP.getFreeHeap());
+  if (!t.ok && plan.hasSecond && voicepick::worthFallback(t.status)) {
+    voiceRefused(plan.first, t.status);
+    header.setNote(String(voicepick::name(plan.second)) + " instead...", ui::SYS);
+    const String firstError = t.error;
+    t = voice::transcribe(voiceKey(plan.second), lang::kLanguages[dictation].code);
+    Serial.printf("[voice] stt %s ok=%d http=%d %ums err=%s\n", voicepick::name(plan.second), t.ok, t.status, t.ms,
+                  t.error.c_str());
+    if (!t.ok) t.error = firstError + "; then " + t.error;
+  }
   lastHeaderMs = millis();
   if (!t.ok) {
     v.add("Voice: " + t.error, ui::ERR);

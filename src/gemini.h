@@ -45,7 +45,9 @@ inline String failure(WiFiClientSecure& c, int code) {
 }
 
 // The words in the WAV at `wavPath`. `language` is an ISO 639-1 code or empty.
-inline bool transcribe(const String& key, const char* wavPath, const String& language, String& text, String& error) {
+inline bool transcribe(const String& key, const char* wavPath, const String& language, String& text, int& code,
+                       String& error) {
+  code = 0;
   File f = SD.open(wavPath, FILE_READ);
   if (!f) {
     error = "no recording on SD";
@@ -73,7 +75,7 @@ inline bool transcribe(const String& key, const char* wavPath, const String& lan
   f.close();
   c.print(suffix);
 
-  const int code = status(c);
+  code = status(c);
   if (code != 200) {
     error = failure(c, code);
     c.stop();

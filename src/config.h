@@ -1,7 +1,7 @@
 // Kloudputer — settings: what was set up from a phone (kept in NVS) outranks files on the SD card,
 // which stay as a fallback. The SD files are /keys.txt, then /kloudputer/config.txt, which overrides it.
 // Format: KEY=VALUE per line, '#' starts a comment line.
-//   ANTHROPIC_API_KEY=sk-ant-...   GROQ_API_KEY=gsk_... (or GEMINI_API_KEY=...)   WIFI_SSID=...   WIFI_PASS=...   MODEL=claude-haiku-5-5
+//   ANTHROPIC_API_KEY=sk-ant-...   GROQ_API_KEY=gsk_...   GEMINI_API_KEY=...   WIFI_SSID=...   WIFI_PASS=...   MODEL=claude-haiku-5-5
 //   TZ=<+04>-4   (POSIX time zone for dates on screen; UTC when absent)
 #pragma once
 #ifdef ARDUINO
@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <vector>
 #include "brand.h"
+#include "gemini_codec.h"
 
 struct Config {
   String anthropicKey;
@@ -21,6 +22,8 @@ struct Config {
   String tz = "UTC0";
   String anthropicFrom;  // "phone" or the file that set it; empty when there's no key
   String groqFrom;
+  String geminiKey;  // a second voice provider; either key turns voice on
+  String geminiFrom;
   String source;  // everywhere settings came from, e.g. "phone + /keys.txt"
 };
 
@@ -45,7 +48,8 @@ inline void parseConfig(File& f, Config& c) {
       v = v.substring(1, v.length() - 1);
     }
     if (k == "ANTHROPIC_API_KEY") c.anthropicKey = v;
-    else if (k == "GROQ_API_KEY" || k == "GEMINI_API_KEY") c.groqKey = v;  // one voice key, either provider
+    else if (k == "GROQ_API_KEY") c.groqKey = v;
+    else if (k == "GEMINI_API_KEY") c.geminiKey = v;
     else if (k == "WIFI_SSID") c.wifiSsid = v;
     else if (k == "WIFI_PASS" || k == "WIFI_PASSWORD") c.wifiPass = v;
     else if (k == "MODEL" || k == "CLAUDE_MODEL") c.model = v;
@@ -60,11 +64,12 @@ inline bool loadConfig(Config& c) {
     if (!SD.exists(p)) continue;
     File f = SD.open(p);
     if (!f) continue;
-    const String anthropic = c.anthropicKey, groq = c.groqKey;
+    const String anthropic = c.anthropicKey, groq = c.groqKey, gemini = c.geminiKey;
     parseConfig(f, c);
     f.close();
     if (c.anthropicKey != anthropic) c.anthropicFrom = p;
     if (c.groqKey != groq) c.groqFrom = p;
+    if (c.geminiKey != gemini) c.geminiFrom = p;
     if (c.source.length()) c.source += " + ";
     c.source += p;
     any = true;
@@ -89,6 +94,11 @@ inline void loadPhone(Config& c) {
     c.groqFrom = "phone";
     fromPhone = true;
   }
+  if (const String v = saved("ykey"); v.length()) {
+    c.geminiKey = v;
+    c.geminiFrom = "phone";
+    fromPhone = true;
+  }
   if (const String v = saved("tz"); v.length()) {
     c.tz = v;
     fromPhone = true;
@@ -99,19 +109,32 @@ inline void loadPhone(Config& c) {
 }
 
 // Stores what the phone sent; an empty field keeps what's there. False if NVS refused.
-inline bool savePhone(const String& anthropicKey, const String& groqKey, const String& model, const String& tz) {
+inline bool savePhone(const String& anthropicKey, const String& groqKey, const String& model, const String& tz,
+                      const String& geminiKey = String()) {
   Preferences p;
   if (!p.begin(kPrefs, false)) return false;
   const struct {
     const char* key;
     const String& value;
-  } fields[] = {{"akey", anthropicKey}, {"gkey", groqKey}, {"model", model}, {"tz", tz}};
+  } fields[] = {{"akey", anthropicKey}, {"gkey", groqKey}, {"ykey", geminiKey}, {"model", model}, {"tz", tz}};
   bool ok = true;
   for (const auto& f : fields) {
     if (f.value.length()) ok = p.putString(f.key, f.value) > 0 && ok;
   }
   p.end();
   return ok;
+}
+
+// A Gemini key that ended up in the Groq slot (an older config file, or a paste into the wrong line) moves to
+// its own, unless one is already there.
+inline void sortVoiceKeys(Config& c) {
+  if (!gemini::isKey(c.groqKey)) return;
+  if (c.geminiKey.isEmpty()) {
+    c.geminiKey = c.groqKey;
+    c.geminiFrom = c.groqFrom;
+  }
+  c.groqKey = "";
+  c.groqFrom = "";
 }
 
 // ---------- paired agents ----------

@@ -13,6 +13,7 @@
 #include "approvals.h"
 #include "usage.h"
 #include "gemini_codec.h"
+#include "voicepick.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...)                                     \
@@ -639,8 +640,12 @@ static void testValidate() {
   struct { const char* what; void (*edit)(phone::Form&); bool haveKey; const char* want; } cases[] = {
       {"bad anthropic prefix", [](phone::Form& f) { f.anthropicKey = "sk-proj-123"; }, true, "should start with sk-ant-"},
       {"bad groq prefix", [](phone::Form& f) { f.groqKey = "gsx_1"; }, true, "should start with gsk_"},
-      {"gemini key, old shape", [](phone::Form& f) { f.groqKey = "AIzaSyExampleExample"; }, true, ""},
-      {"gemini key, new shape", [](phone::Form& f) { f.groqKey = "AQ.Ab8ExampleExample"; }, true, ""},
+      {"gemini key, old shape", [](phone::Form& f) { f.geminiKey = "AIzaSyExampleExample"; }, true, ""},
+      {"gemini key, new shape", [](phone::Form& f) { f.geminiKey = "AQ.Ab8ExampleExample"; }, true, ""},
+      {"both voice keys", [](phone::Form& f) { f.groqKey = "gsk_abcdefgh"; f.geminiKey = "AQ.Ab8ExampleExample"; }, true, ""},
+      {"gemini key in the groq field", [](phone::Form& f) { f.groqKey = "AQ.Ab8ExampleExample"; }, true, "Paste it in the Gemini field"},
+      {"groq key in the gemini field", [](phone::Form& f) { f.geminiKey = "gsk_abcdefgh"; }, true, "Gemini key should start with"},
+      {"space inside the gemini key", [](phone::Form& f) { f.geminiKey = "AQ.Ab8 Example"; }, true, "spaces"},
       {"space inside a key", [](phone::Form& f) { f.anthropicKey = "sk-ant-ab cd"; }, true, "spaces"},
       {"key over 256", [](phone::Form& f) { f.anthropicKey = ("sk-ant-" + std::string(250, 'x')).c_str(); }, true, "too long"},
       {"no key anywhere", [](phone::Form& f) { f.anthropicKey = ""; }, false, "Paste your Anthropic"},
@@ -678,12 +683,14 @@ static void writeText(const char* path, const String& text) {
 static void testNeverEcho() {
   const String akey = "sk-ant-api03-Zq9XwV7pL2mN8rT4yU6eWbK3dF5gH1jQ-abcd";
   const String gkey = "gsk_Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk9LzXc7Vb5Nmwxyz";
-  const phone::Current now = phone::currentFrom("HomeNet", akey, gkey, "claude-haiku-5-5", "<+04>-4");
+  const String ykey = "AQ.Mn7Bv5Cx3Zl1Kj9Hg7Fd5Sa3Pq1Wo-mnop";
+  const phone::Current now = phone::currentFrom("HomeNet", akey, gkey, "claude-haiku-5-5", "<+04>-4", ykey);
   phone::Form typed;
   typed.ssid = "Cafe<script>alert(1)</script>";
   typed.wifiPass = "Wq7Rt5Yp3Lk9";
   typed.anthropicKey = "sk-ant-api03-Hq4Zp8Wv2Nx6Kd";
   typed.groqKey = "gsk_Rj5Tm9Xc3Bv7Qy";
+  typed.geminiKey = "AQ.Ty6Ui8Op0As2Df4";
   typed.model = "claude-opus-5-5";
   typed.tz = "<+05>-5";
   const String fresh = phone::page(now, kModelChoices, phone::Form(), "");
@@ -691,10 +698,13 @@ static void testNeverEcho() {
   int total = 0;
   for (const String* html : {&fresh, &again}) {
     total += leaks(*html, akey.substring(7)) + leaks(*html, gkey.substring(4)) + leaks(*html, typed.wifiPass) +
-             leaks(*html, typed.anthropicKey.substring(13)) + leaks(*html, typed.groqKey.substring(4));
+             leaks(*html, typed.anthropicKey.substring(13)) + leaks(*html, typed.groqKey.substring(4)) +
+             leaks(*html, ykey.substring(3)) + leaks(*html, typed.geminiKey.substring(3));
   }
   CHECK(total == 0, "%d secret fragments reached the page", total);
-  CHECK(fresh.indexOf("ends in ...abcd") >= 0 && fresh.indexOf("ends in ...wxyz") >= 0, "saved keys show their tails");
+  CHECK(fresh.indexOf("ends in ...abcd") >= 0 && fresh.indexOf("ends in ...wxyz") >= 0 &&
+            fresh.indexOf("ends in ...mnop") >= 0 && fresh.indexOf("{{") < 0,
+        "saved keys show their tails, and no placeholder is left unfilled");
   CHECK(again.indexOf("Pick a model from the list.") >= 0 && again.indexOf("value=\"claude-opus-5-5\" selected") >= 0 &&
             again.indexOf("value=\"&lt;+05&gt;-5\"") >= 0 && again.indexOf("Cafe&lt;script&gt;") >= 0 &&
             again.indexOf("<script>alert") < 0,
@@ -1707,6 +1717,77 @@ static void testGeminiCodec() {
   CHECK(gemini::path(gemini::kTtsModel) == "/v1beta/models/gemini-3.8-flash-lite-tts:generateContent", "path");
 }
 
+static void testVoicePick() {
+  using voicepick::Provider;
+  auto p = voicepick::plan(false, false, Provider::Groq, false);
+  CHECK(!p.any && !p.hasSecond, "no keys, no voice");
+  p = voicepick::plan(true, false, Provider::Groq, false);
+  CHECK(p.any && p.first == Provider::Groq && !p.hasSecond, "only Groq");
+  p = voicepick::plan(true, false, Provider::Gemini, false);
+  CHECK(p.first == Provider::Groq && !p.hasSecond, "preferring a provider with no key uses the one there is");
+  p = voicepick::plan(false, true, Provider::Groq, true);
+  CHECK(p.first == Provider::Gemini && !p.hasSecond, "only Gemini, whatever the preference");
+  p = voicepick::plan(true, true, Provider::Groq, false);
+  CHECK(p.first == Provider::Groq && p.hasSecond && p.second == Provider::Gemini, "both: the preferred one first, the other as fallback");
+  p = voicepick::plan(true, true, Provider::Gemini, false);
+  CHECK(p.first == Provider::Gemini && p.hasSecond && p.second == Provider::Groq, "and the other way round");
+  p = voicepick::plan(true, true, Provider::Groq, true);
+  CHECK(p.first == Provider::Gemini && p.hasSecond && p.second == Provider::Groq, "a resting preferred provider goes second");
+  p = voicepick::plan(true, false, Provider::Groq, true);
+  CHECK(p.first == Provider::Groq && !p.hasSecond, "resting changes nothing when there is no other key");
+
+  CHECK(voicepick::worthFallback(429) && voicepick::worthFallback(401) && voicepick::worthFallback(503), "an error answer is worth a second provider");
+  CHECK(!voicepick::worthFallback(0) && !voicepick::worthFallback(200), "no answer (the network) or success is not");
+  CHECK(voicepick::rateLimited(429) && !voicepick::rateLimited(401), "only 429 is a rate limit");
+
+  voicepick::Rest r;
+  CHECK(!r.resting(0), "not resting to start");
+  r.start(1000);
+  CHECK(r.resting(1000) && r.resting(1000 + voicepick::kRestMs - 1), "rests for five minutes");
+  CHECK(!r.resting(1000 + voicepick::kRestMs) && !r.resting(2000), "then is back, and stays back");
+  r.start(4294967000u);
+  CHECK(r.resting(4294967000u + 1000) && !r.resting(4294967000u + voicepick::kRestMs), "across the millis() wrap");
+  CHECK(String(voicepick::name(Provider::Groq)) == "Groq" && String(voicepick::name(voicepick::other(Provider::Groq))) == "Gemini", "names");
+}
+
+static void testTwoVoiceKeys() {
+  SD.reset();
+  g_nvs.clear();
+  SD.dirs.insert(DATA_DIR);
+  const char* text = "GROQ_API_KEY=gsk_from_sd\nGEMINI_API_KEY=AQ.from_sd_card\n";
+  SD.files[DATA_DIR "/config.txt"] = std::vector<uint8_t>(text, text + strlen(text));
+  Config c;
+  CHECK(loadConfig(c) && c.groqKey == "gsk_from_sd" && c.geminiKey == "AQ.from_sd_card", "each key has its own slot");
+  CHECK(c.geminiFrom == DATA_DIR "/config.txt" && c.groqFrom == DATA_DIR "/config.txt", "and its own source");
+  CHECK(savePhone("", "", "", "", "AQ.from_the_phone"), "the phone saves a Gemini key");
+  loadPhone(c);
+  CHECK(c.geminiKey == "AQ.from_the_phone" && c.geminiFrom == "phone" && c.groqKey == "gsk_from_sd", "the phone's Gemini key wins; Groq is untouched");
+  CHECK(savePhone("", "gsk_phone", "", ""), "an older caller without the Gemini argument still works");
+  Config d;
+  loadPhone(d);
+  CHECK(d.groqKey == "gsk_phone" && d.geminiKey == "AQ.from_the_phone", "saving one key keeps the other");
+
+  Config misplaced;
+  misplaced.groqKey = "AIzaSyInTheWrongSlot";
+  misplaced.groqFrom = "/keys.txt";
+  sortVoiceKeys(misplaced);
+  CHECK(misplaced.groqKey.isEmpty() && misplaced.geminiKey == "AIzaSyInTheWrongSlot" && misplaced.geminiFrom == "/keys.txt", "a Gemini key in the Groq slot moves over");
+  Config both;
+  both.groqKey = "AQ.wrong_slot";
+  both.geminiKey = "AQ.right_slot";
+  sortVoiceKeys(both);
+  CHECK(both.groqKey.isEmpty() && both.geminiKey == "AQ.right_slot", "but never replaces a Gemini key that is already set");
+  Config fine;
+  fine.groqKey = "gsk_ok";
+  sortVoiceKeys(fine);
+  CHECK(fine.groqKey == "gsk_ok" && fine.geminiKey.isEmpty(), "a Groq key stays where it is");
+
+  const phone::Form f = phone::parseForm("gkey=gsk_abc&ykey=+AQ.Ab8Example%0A");
+  CHECK(f.groqKey == "gsk_abc" && f.geminiKey == "AQ.Ab8Example", "the form carries both, trimmed");
+  const phone::Current now = phone::currentFrom("Home", "sk-ant-x", "gsk_Qw8Er7Ty6Ui5Op4As3Df", "claude-haiku-5-5", "UTC0", "AQ.Zx9Cv8Bn7Mq6Wp5Lk4Jh");
+  CHECK(now.hasGroq && now.hasGemini && now.geminiTail == "k4Jh", "the page knows both are saved and shows only a tail");
+}
+
 int main() {
   testChunks();
   testPromptHistory();
@@ -1753,6 +1834,8 @@ int main() {
   testApprovals();
   testUsage();
   testGeminiCodec();
+  testVoicePick();
+  testTwoVoiceKeys();
   testRelay();
   testAgentForm();
   testAgentStore();

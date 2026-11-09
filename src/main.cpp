@@ -25,6 +25,7 @@
 #include "ui.h"
 #include "usage.h"
 #include "voice.h"
+#include "voicepick.h"
 
 // The loop task runs every TLS handshake. From the agent screen, voice upload sits ~7 calls deep (menu, agents,
 // agent screen, voice, Groq, TLS) and overflowed the default 8 KB stack. /info shows the measured headroom.
@@ -73,6 +74,8 @@ int dictation = 0;  // index into lang::kLanguages
 power::ScreenSleep screenSleep;
 int sleepOption = power::kDefaultOption;  // index into power::kOptions
 uint8_t fullBrightness = 128;
+voicepick::Provider voiceFirst = voicepick::Provider::Groq;  // the Voice via menu row; Groq answers faster
+voicepick::Rest voiceRest[2];  // by provider: skipped for a while after it said "slow down"
 usage::Tally spent;  // estimated cost: this chat, today, and all time
 notes::Notes memory;  // what Claude was asked to remember, from the SD card
 bool webSearch = true;  // let Claude search the web; off for the session if the API refuses it
@@ -247,7 +250,21 @@ void setModel(const String& id) {
   refreshHeader();
 }
 
-// Needs cfg loaded: voice defaults to on when a Groq key exists.
+bool haveVoiceKey() { return cfg.groqKey.length() || cfg.geminiKey.length(); }
+const String& voiceKey(voicepick::Provider p) { return p == voicepick::Provider::Groq ? cfg.groqKey : cfg.geminiKey; }
+
+// Who to ask first and who is left as a fallback, given the keys there are and any recent rate limit.
+voicepick::Plan voicePlan() {
+  return voicepick::plan(cfg.groqKey.length() > 0, cfg.geminiKey.length() > 0, voiceFirst,
+                         voiceRest[static_cast<int>(voiceFirst)].resting(millis()));
+}
+
+// A provider that said "slow down" is skipped for a few minutes when there is another to use.
+void voiceRefused(voicepick::Provider p, int status) {
+  if (voicepick::rateLimited(status)) voiceRest[static_cast<int>(p)].start(millis());
+}
+
+// Needs cfg loaded: voice defaults to on when a voice key exists.
 void loadPrefs() {
   bool voice = true;
   Preferences p;
@@ -257,13 +274,14 @@ void loadPrefs() {
     volume = p.getUChar("vol", volume);
     dictation = lang::indexOf(p.getString("lang", ""));
     webSearch = p.getBool("web", webSearch);
+    voiceFirst = p.getUChar("vprov", 0) == 1 ? voicepick::Provider::Gemini : voicepick::Provider::Groq;
     spent.date = p.getUInt("udate", 0);
     spent.day = p.getUInt("uday", 0);
     spent.total = p.getUInt("utotal", 0);
     sleepOption = power::optionFor(p.getUInt("sleep", power::kOptions[power::kDefaultOption].ms));
     p.end();
   }
-  voiceReplies = voice && cfg.groqKey.length();
+  voiceReplies = voice && haveVoiceKey();
   adv_audio::setVolume(volume);
 }
 
@@ -273,6 +291,7 @@ void loadSettings() {
   cfg = Config();
   if (sdOk) loadConfig(cfg);
   loadPhone(cfg);
+  sortVoiceKeys(cfg);
   loadPrefs();
   if (sdOk) memory = notes::load();
   setenv("TZ", cfg.tz.c_str(), 1);  // dates in the Sessions list, before a clock sync sets it again
@@ -320,10 +339,29 @@ const MainRow kMainMenu[] = {
     {"Agents", agentsValue, agentsMenu, nullptr, nullptr},
     {"Voice",
      []() -> String {
-       if (cfg.groqKey.isEmpty()) return "needs a voice key";
+       if (!haveVoiceKey()) return "needs a voice key";
        return voiceReplies ? "on - " + String(voiceName) : String("off");
      },
      inMenu<voiceMenu>, nullptr, nullptr},
+    {"Voice via",
+     []() -> String {
+       const voicepick::Plan p = voicePlan();
+       if (!p.any) return "no key";
+       if (!p.hasSecond) return String(voicepick::name(p.first)) + " only";
+       return String("< ") + voicepick::name(voiceFirst) + " first >";
+     },
+     nullptr,
+     [](int) {
+       if (cfg.groqKey.isEmpty() || cfg.geminiKey.isEmpty()) return;  // nothing to choose between
+       voiceFirst = voicepick::other(voiceFirst);
+       voiceRest[static_cast<int>(voiceFirst)] = voicepick::Rest();  // choosing it again is asking to try it now
+       Preferences p;
+       if (p.begin("cputer", false)) {
+         p.putUChar("vprov", voiceFirst == voicepick::Provider::Gemini ? 1 : 0);
+         p.end();
+       }
+     },
+     "Left/right: who goes first   Del back"},
     {"Dictation", []() -> String { return String("< ") + lang::kLanguages[dictation].name + " >"; }, nullptr,
      [](int dir) {
        dictation = lang::step(dictation, dir);
@@ -476,8 +514,8 @@ void setup() {
   }
   Serial.printf("[boot] %s %s board=%d kb=%d mic=%d sd=%d cfg=%s wifi=%d time=%d groq=%d crypto=%d heap=%u\n",
                 brand::kProduct, kVersion, boardId, kb->ok(), adv_audio::codecPresent(), sdOk, cfg.source.c_str(),
-                WiFi.status() == WL_CONNECTED, timeOk, cfg.groqKey.length() > 0, cryptoOk, ESP.getFreeHeap());
-  view.add(cfg.groqKey.length() ? "Type or hold G0 to talk. Tab: menu." : "Ask me anything. Tab opens the menu.",
+                WiFi.status() == WL_CONNECTED, timeOk, haveVoiceKey(), cryptoOk, ESP.getFreeHeap());
+  view.add(haveVoiceKey() ? "Type or hold G0 to talk. Tab: menu." : "Ask me anything. Tab opens the menu.",
            ui::DIM);
   if (!view.shown()) {
     bootStep("ready", kBootSteps);

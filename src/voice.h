@@ -143,6 +143,7 @@ Recording record(KeepGoing keepGoing, OnTick onTick, uint32_t maxMs = 30000, boo
 
 struct Transcript {
   bool ok = false;
+  int status = 0;  // HTTP status, 0 when the provider never answered
   String text;
   String error;
   uint32_t ms = 0;
@@ -150,11 +151,12 @@ struct Transcript {
 
 // Transcribes the recording with the provider the voice key belongs to. For Groq, uploads it as
 // multipart/form-data, streaming the WAV from SD in 2 KB pieces.
-inline Transcript transcribe(const String& groqKey, const String& language) {
+inline Transcript transcribe(const String& key, const String& language) {
+  const String& groqKey = key;
   Transcript t;
   const uint32_t t0 = millis();
   if (gemini::isKey(groqKey)) {  // the voice key is a Google one
-    t.ok = gemini::transcribe(groqKey, kPath, language, t.text, t.error);
+    t.ok = gemini::transcribe(groqKey, kPath, language, t.text, t.status, t.error);
     t.ms = millis() - t0;
     return t;
   }
@@ -212,6 +214,7 @@ inline Transcript transcribe(const String& groqKey, const String& language) {
   const DeserializationError de = deserializeJson(doc, c, DeserializationOption::Filter(filter));
   c.stop();
   t.ms = millis() - t0;
+  t.status = code;
 
   if (code != 200) {
     t.error = "Groq HTTP " + String(code) + ": " + String(doc["error"]["message"] | "no details");

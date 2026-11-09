@@ -109,6 +109,7 @@ static std::vector<ui::MenuItem> mainItems(const char* model = "Haiku 5.5") {
           {"Sessions", "12 saved"},
           {"Agents", "2 paired"},
           {"Voice", "on - diana"},
+          {"Voice via", "< Groq first >", "Left/right: who goes first   Del back"},
           {"Dictation", "< Auto >", "Left/right: language   Del back"},
           {"Web search", "< on >", "Left/right: on or off   Del back"},
           {"Screen sleep", "< 1 min >", "Left/right: dim then off   Del back"},

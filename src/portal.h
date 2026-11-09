@@ -83,7 +83,7 @@ class SaveHandler : public RequestHandler {
     const phone::Form form = phone::parseForm(body_.text);
     String error = body_.oversized ? String("That was more than 4 KB, so nothing was saved.")
                                    : phone::validate(form, setup_.now.hasAnthropic, setup_.models, setup_.now.agents);
-    if (error.isEmpty() && !savePhone(form.anthropicKey, form.groqKey, form.model, form.tz)) {
+    if (error.isEmpty() && !savePhone(form.anthropicKey, form.groqKey, form.model, form.tz, form.geminiKey)) {
       error = "The Cardputer couldn't store that. Try again.";
     }
     if (error.isEmpty() && (form.agentName.length() || !form.removeAgents.empty())) {

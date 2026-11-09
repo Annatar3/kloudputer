@@ -58,8 +58,8 @@ void afterSetup(const portal::Outcome& o) {
   if (o.end == End::Saved) {
     header.setNote("checking keys...", ui::SYS);
     if (cfg.anthropicKey.length()) reportKey("Anthropic", keycheck::anthropic(cfg.anthropicKey));
-    if (gemini::isKey(cfg.groqKey)) reportKey("Gemini", keycheck::gemini(cfg.groqKey));
-    else if (cfg.groqKey.length()) reportKey("Groq", keycheck::groq(cfg.groqKey));
+    if (cfg.groqKey.length()) reportKey("Groq", keycheck::groq(cfg.groqKey));
+    if (cfg.geminiKey.length()) reportKey("Gemini", keycheck::gemini(cfg.geminiKey));
   }
   refreshHeader();
 }
@@ -67,7 +67,7 @@ void afterSetup(const portal::Outcome& o) {
 // Phone setup takes the screen (its own Wi-Fi and page); the outcome is handled back in the chat.
 Then setupFromPhone() {
   const RelayHold hold;
-  phone::Current now = phone::currentFrom(currentSsid(), cfg.anthropicKey, cfg.groqKey, cfg.model, cfg.tz);
+  phone::Current now = phone::currentFrom(currentSsid(), cfg.anthropicKey, cfg.groqKey, cfg.model, cfg.tz, cfg.geminiKey);
   for (const AgentEntry& a : loadAgents()) now.agents.push_back({a.name, a.relay});
   const portal::Outcome o = portal::run(M5Cardputer.Display, header, {now, modelChoices(), setupKey});
   return [o] { afterSetup(o); };

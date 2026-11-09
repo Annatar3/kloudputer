@@ -28,6 +28,7 @@ struct Form {
   String wifiPass;
   String anthropicKey;  // empty keeps the stored key
   String groqKey;
+  String geminiKey;
   String model;
   String tz;
   String agentName;  // a new or re-paired agent; empty adds none
@@ -53,6 +54,8 @@ struct Current {
   String anthropicTail;
   bool hasGroq = false;
   String groqTail;
+  bool hasGemini = false;
+  String geminiTail;
   String model;
   String tz;
   std::vector<AgentRow> agents;
@@ -61,13 +64,15 @@ struct Current {
 inline String tail(const String& key) { return key.length() >= 12 ? key.substring(key.length() - 4) : String(); }
 
 inline Current currentFrom(const String& ssid, const String& anthropicKey, const String& groqKey,
-                           const String& model, const String& tz) {
+                           const String& model, const String& tz, const String& geminiKey = String()) {
   Current c;
   c.wifiSsid = ssid;
   c.hasAnthropic = anthropicKey.length() > 0;
   c.anthropicTail = tail(anthropicKey);
   c.hasGroq = groqKey.length() > 0;
   c.groqTail = tail(groqKey);
+  c.hasGemini = geminiKey.length() > 0;
+  c.geminiTail = tail(geminiKey);
   c.model = model;
   c.tz = tz;
   return c;
@@ -107,7 +112,8 @@ struct Field {
 };
 constexpr Field kFields[] = {
     {"ssid", "The Wi-Fi name", &Form::ssid},       {"pass", "The Wi-Fi password", &Form::wifiPass},
-    {"akey", "The Anthropic key", &Form::anthropicKey}, {"gkey", "The voice key", &Form::groqKey},
+    {"akey", "The Anthropic key", &Form::anthropicKey}, {"gkey", "The Groq key", &Form::groqKey},
+    {"ykey", "The Gemini key", &Form::geminiKey},
     {"model", "The model", &Form::model},           {"tz", "The time zone", &Form::tz},
     {"aname", "The agent name", &Form::agentName},  {"acode", "The pairing code", &Form::agentCode},
     {"arelay", "The relay", &Form::agentRelay},
@@ -135,6 +141,7 @@ inline Form parseForm(const String& body) {
   if (f.ssid == kOther) f.ssid = other;
   f.anthropicKey.trim();  // pasted keys often carry a stray space or newline
   f.groqKey.trim();
+  f.geminiKey.trim();
   f.tz.trim();
   f.agentName.trim();
   f.agentCode.trim();
@@ -190,11 +197,12 @@ inline String validate(const Form& f, bool haveAnthropicKey, const std::vector<C
     return "Wi-Fi passwords are 8 to 64 characters.";
   }
   if (!printable(f.ssid, true) || !printable(f.wifiPass, true)) return "The Wi-Fi name or password has odd characters.";
-  if (!printable(f.anthropicKey, false) || !printable(f.groqKey, false)) return "A key has spaces or odd characters in it.";
+  if (!printable(f.anthropicKey, false) || !printable(f.groqKey, false) || !printable(f.geminiKey, false)) return "A key has spaces or odd characters in it.";
   if (f.anthropicKey.length() && !f.anthropicKey.startsWith("sk-ant-")) return "The Anthropic key should start with sk-ant-";
-  if (f.groqKey.length() && !f.groqKey.startsWith("gsk_") && !gemini::isKey(f.groqKey)) {
-    return "The voice key should start with gsk_ (Groq), or AIza or AQ. (Gemini).";
+  if (f.groqKey.length() && !f.groqKey.startsWith("gsk_")) {
+    return gemini::isKey(f.groqKey) ? "That looks like a Gemini key. Paste it in the Gemini field." : "The Groq key should start with gsk_";
   }
+  if (f.geminiKey.length() && !gemini::isKey(f.geminiKey)) return "The Gemini key should start with AIza or AQ.";
   if (!haveAnthropicKey && f.anthropicKey.isEmpty()) return "Paste your Anthropic API key to finish setup.";
   if (f.model.length() && std::none_of(models.begin(), models.end(), [&f](const Choice& m) { return m.id == f.model; })) {
     return "Pick a model from the list.";
@@ -287,9 +295,14 @@ constexpr const char* kForm = R"HTML(<div><h1>{{PRODUCT}}</h1><p>Set up your {{T
 {{AKEY_NOTE}}<div class="pw"><input id="akey" name="akey" type="password" maxlength="256" placeholder="sk-ant-..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Anthropic API key"><button type="button" data-show="akey">Show</button></div>
 <p class="hint">Make one at console.anthropic.com, under API keys. What you chat is billed to that Anthropic account.</p>
 </section>
-<section><h2>Voice key<small>optional</small></h2>
-{{GKEY_NOTE}}<div class="pw"><input id="gkey" name="gkey" type="password" maxlength="256" placeholder="gsk_... or AIza..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Voice key"><button type="button" data-show="gkey">Show</button></div>
-<p class="hint">Turns on voice: hold G0 to talk, and hear the answers. Use a free Groq key (console.groq.com/keys) or a Google Gemini key (aistudio.google.com/apikey).</p>
+<section><h2>Voice keys<small>optional</small></h2>
+<p class="hint">Either one turns on voice: hold G0 to talk, and hear the answers. With both, you pick which goes first in the menu and the other steps in when it is rate limited.</p>
+<label for="gkey">Groq</label>
+{{GKEY_NOTE}}<div class="pw"><input id="gkey" name="gkey" type="password" maxlength="256" placeholder="gsk_..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Groq API key"><button type="button" data-show="gkey">Show</button></div>
+<p class="hint">Fast. Free at console.groq.com/keys.</p>
+<label for="ykey">Google Gemini</label>
+{{YKEY_NOTE}}<div class="pw"><input id="ykey" name="ykey" type="password" maxlength="256" placeholder="AIza... or AQ..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Gemini API key"><button type="button" data-show="ykey">Show</button></div>
+<p class="hint">Slower, with no 200-character limit on spoken replies. From aistudio.google.com/apikey.</p>
 </section>
 <section><h2>Agents<small>optional</small></h2>
 {{AGENTS}}<label for="aname">Pair an agent</label>
@@ -451,6 +464,7 @@ inline String page(const Current& now, const std::vector<Choice>& models, const 
   html.replace("{{WIFI_KEEP}}", now.wifiSsid.length() ? "Keep " + htmlEscape(now.wifiSsid) : String("Choose a network"));
   html.replace("{{AKEY_NOTE}}", keyNote(now.hasAnthropic, now.anthropicTail));
   html.replace("{{GKEY_NOTE}}", keyNote(now.hasGroq, now.groqTail));
+  html.replace("{{YKEY_NOTE}}", keyNote(now.hasGemini, now.geminiTail));
   html.replace("{{MODELS}}", options);
   html.replace("{{TZ}}", htmlEscape(kept.tz));
   html.replace("{{TZ_NOW}}", htmlEscape(now.tz));
