@@ -123,6 +123,15 @@ static std::vector<ui::MenuItem> mainItems(const char* model = "Haiku 5.5") {
           {"Keys/help", ""}};
 }
 
+// Where the Volume row is, so the checks keep pointing at it when rows are added above.
+static int volumeRow() {
+  const auto items = mainItems();
+  for (size_t i = 0; i < items.size(); ++i) {
+    if (items[i].label == "Volume") return static_cast<int>(i);
+  }
+  return 0;
+}
+
 static std::vector<ui::MenuItem> voiceItems() {
   const char* names[] = {"Autumn", "Diana", "Hannah", "Austin", "Daniel", "Troy"};
   const char* kinds[] = {"female", "female", "female", "male", "male", "male"};
@@ -463,11 +472,11 @@ int main() {
   same("menu: value change == fresh",
        [](Screen& s) {
          auto items = mainItems();
-         s.menu.open("Menu", items, 7, kNav);
-         s.menu.setValue(7, "< 10 >");
-         s.menu.setValue(7, "< 8 >");
+         s.menu.open("Menu", items, volumeRow(), kNav);
+         s.menu.setValue(volumeRow(), "< 10 >");
+         s.menu.setValue(volumeRow(), "< 8 >");
        },
-       [](Screen& s) { s.menu.open("Menu", mainItems(), 7, kNav); });
+       [](Screen& s) { s.menu.open("Menu", mainItems(), volumeRow(), kNav); });
   same("setup log: events one by one == all at once",
        [](Screen& s) {
          ui::SetupScreen setup(s.header);
