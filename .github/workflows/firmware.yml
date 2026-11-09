@@ -1,4 +1,4 @@
-# Builds the firmware on every push and pull request. A tag equal to kVersion in src/main.cpp (e.g. v1.7)
+# Builds the firmware and runs every test on each push and pull request. A tag equal to kVersion in src/main.cpp (e.g. v1.7)
 # also publishes a GitHub release with:
 #   kloudputer-<tag>.bin      full image: flash at 0x0 (M5Burner, esptool) or install from M5Launcher
 #   kloudputer-<tag>-app.bin  app only, for OTA-style installers
@@ -37,11 +37,34 @@ jobs:
             ~/.cache/pip
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Install PlatformIO
-        run: pip install platformio==6.2.0
+        run: pip install platformio==6.2.0 pillow
 
       - name: Build
         run: pio run -e cardputer-adv
+
+      # The tests below compile the firmware's own headers for the runner, against the libraries the build fetched.
+      - name: Connector tests
+        run: node --test connector/tests/*.test.mjs
+
+      - name: Firmware logic tests
+        run: tests/host/run.sh
+
+      - name: Firmware and connector speak the same protocol
+        run: tests/interop/run.sh
+
+      - name: Screens render
+        run: tests/ui/preview.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kloudputer-screens
+          path: tests/build/ui/out/contact_sheet.png
+          if-no-files-found: error
 
       - name: Package
         run: |

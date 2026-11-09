@@ -9,3 +9,6 @@ todo.md
 *.secret
 *.env
 cardputer-state.json
+
+# Test build output
+tests/build/
