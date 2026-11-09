@@ -320,7 +320,7 @@ const MainRow kMainMenu[] = {
     {"Agents", agentsValue, agentsMenu, nullptr, nullptr},
     {"Voice",
      []() -> String {
-       if (cfg.groqKey.isEmpty()) return "needs Groq key";
+       if (cfg.groqKey.isEmpty()) return "needs a voice key";
        return voiceReplies ? "on - " + String(voiceName) : String("off");
      },
      inMenu<voiceMenu>, nullptr, nullptr},

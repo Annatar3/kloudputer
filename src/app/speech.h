@@ -17,10 +17,11 @@ bool stopRequested() {
 void speak(const String& text, ui::ChatView& v = view) {
   const RelayHold hold;
   if (cfg.groqKey.isEmpty() || WiFi.status() != WL_CONNECTED) {
-    voiceError(cfg.groqKey.isEmpty() ? "needs a Groq key (/setup)" : "offline", v);
+    voiceError(cfg.groqKey.isEmpty() ? "needs a voice key (/setup)" : "offline", v);
     return;
   }
-  const std::vector<String> parts = tts::chunks(text);
+  const std::vector<String> parts =
+      gemini::isKey(cfg.groqKey) ? tts::chunks(text, gemini::kMaxSpeakChars, 1) : tts::chunks(text);
   size_t ready = 0;
   while (ready < parts.size()) {
     header.setNote("voice " + String(ready + 1) + "/" + String(parts.size()) + "...", ui::SYS);

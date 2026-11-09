@@ -58,7 +58,8 @@ void afterSetup(const portal::Outcome& o) {
   if (o.end == End::Saved) {
     header.setNote("checking keys...", ui::SYS);
     if (cfg.anthropicKey.length()) reportKey("Anthropic", keycheck::anthropic(cfg.anthropicKey));
-    if (cfg.groqKey.length()) reportKey("Groq", keycheck::groq(cfg.groqKey));
+    if (gemini::isKey(cfg.groqKey)) reportKey("Gemini", keycheck::gemini(cfg.groqKey));
+    else if (cfg.groqKey.length()) reportKey("Groq", keycheck::groq(cfg.groqKey));
   }
   refreshHeader();
 }

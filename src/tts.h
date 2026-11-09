@@ -13,6 +13,7 @@
 #include "audio_adv.h"
 #include "brand.h"
 #include "certs.h"
+#include "gemini.h"
 #include "ui.h"
 
 namespace tts {
@@ -44,16 +45,16 @@ inline const char* findVoice(const String& name) {
 }
 
 // Last sentence end that fits; else a comma past mid-chunk; else the last space; else a hard cut.
-inline int splitPoint(const String& s) {
+inline int splitPoint(const String& s, int maxChunk = kMaxChunk) {
   int cut = 0;
-  for (int i = 0; i < kMaxChunk; ++i) {
+  for (int i = 0; i < maxChunk; ++i) {
     if ((s[i] == '.' || s[i] == '!' || s[i] == '?') && s[i + 1] == ' ') cut = i + 1;
   }
   if (cut) return cut;
-  const int comma = s.lastIndexOf(',', kMaxChunk - 1);
-  if (comma > kMaxChunk / 2) return comma + 1;
-  const int space = s.lastIndexOf(' ', kMaxChunk);
-  return space > 0 ? space : kMaxChunk;
+  const int comma = s.lastIndexOf(',', maxChunk - 1);
+  if (comma > maxChunk / 2) return comma + 1;
+  const int space = s.lastIndexOf(' ', maxChunk);
+  return space > 0 ? space : maxChunk;
 }
 
 inline bool hasWords(const String& s) {
@@ -64,8 +65,9 @@ inline bool hasWords(const String& s) {
 }
 
 // Speakable pieces of an answer: markdown noise out, each line a sentence, then whole sentences
-// packed greedily into pieces of at most kMaxChunk characters.
-inline std::vector<String> chunks(const String& answer) {
+// packed greedily into at most maxChunks pieces of at most maxChunk characters. Groq needs the defaults; a provider without the
+// 200-character cap passes one long piece.
+inline std::vector<String> chunks(const String& answer, int maxChunk = kMaxChunk, size_t maxChunks = kMaxChunks) {
   const String text = ui::asciify(answer);
   String flat;
   int start = 0;
@@ -85,8 +87,8 @@ inline std::vector<String> chunks(const String& answer) {
     flat += line;
   }
   std::vector<String> out;
-  while (flat.length() && out.size() < kMaxChunks) {
-    const int cut = static_cast<int>(flat.length()) > kMaxChunk ? splitPoint(flat) : flat.length();
+  while (flat.length() && out.size() < maxChunks) {
+    const int cut = static_cast<int>(flat.length()) > maxChunk ? splitPoint(flat, maxChunk) : flat.length();
     String piece = flat.substring(0, cut);
     piece.trim();
     if (piece.length()) out.push_back(piece);
@@ -196,6 +198,17 @@ inline Synth request(const String& groqKey, const char* voice, const String& tex
 
 // The sample_rate field is undocumented for Orpheus: once Groq rejects it, stop sending it.
 inline Synth synthesize(const String& groqKey, const char* voice, const String& text, const String& path) {
+  if (gemini::isKey(groqKey)) {  // the voice key is a Google one
+    Synth g;
+    const uint32_t t0 = millis();
+    size_t index = 0;
+    for (size_t i = 0; i < sizeof kVoices / sizeof kVoices[0]; ++i) {
+      if (strcmp(voice, kVoices[i]) == 0) index = i;
+    }
+    g.ok = gemini::speak(groqKey, index, text, path, g.bytes, g.status, g.error);
+    g.ms = millis() - t0;
+    return g;
+  }
   static bool askRate = true;
   Synth s = request(groqKey, voice, text, path, askRate);
   if (askRate && s.status == 400 && s.error.indexOf("sample_rate") >= 0) {

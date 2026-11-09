@@ -12,6 +12,7 @@
 #include "power.h"
 #include "approvals.h"
 #include "usage.h"
+#include "gemini_codec.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...)                                     \
@@ -638,6 +639,8 @@ static void testValidate() {
   struct { const char* what; void (*edit)(phone::Form&); bool haveKey; const char* want; } cases[] = {
       {"bad anthropic prefix", [](phone::Form& f) { f.anthropicKey = "sk-proj-123"; }, true, "should start with sk-ant-"},
       {"bad groq prefix", [](phone::Form& f) { f.groqKey = "gsx_1"; }, true, "should start with gsk_"},
+      {"gemini key, old shape", [](phone::Form& f) { f.groqKey = "AIzaSyExampleExample"; }, true, ""},
+      {"gemini key, new shape", [](phone::Form& f) { f.groqKey = "AQ.Ab8ExampleExample"; }, true, ""},
       {"space inside a key", [](phone::Form& f) { f.anthropicKey = "sk-ant-ab cd"; }, true, "spaces"},
       {"key over 256", [](phone::Form& f) { f.anthropicKey = ("sk-ant-" + std::string(250, 'x')).c_str(); }, true, "too long"},
       {"no key anywhere", [](phone::Form& f) { f.anthropicKey = ""; }, false, "Paste your Anthropic"},
@@ -652,7 +655,7 @@ static void testValidate() {
     phone::Form f = form();
     c.edit(f);
     const String got = phone::validate(f, c.haveKey, kModelChoices);
-    CHECK(got.indexOf(c.want) >= 0, "%s: '%s'", c.what, got.c_str());
+    CHECK(*c.want ? got.indexOf(c.want) >= 0 : got.isEmpty(), "%s: '%s'", c.what, got.c_str());
   }
   phone::Form open = form();
   open.wifiPass = "";
@@ -1609,6 +1612,101 @@ static void testSessionSearch() {
   CHECK(true, "boundary sweep done");
 }
 
+static std::string decodeAll(const std::string& json) {
+  gemini::AudioScanner scan;
+  std::string out;
+  uint8_t b;
+  for (char c : json) {
+    if (scan.feed(c, b)) out.push_back(static_cast<char>(b));
+  }
+  return out;
+}
+
+static void testGeminiCodec() {
+  const String longAnswer = "First sentence here. Second one follows, with a comma. Third is the last and it is long enough to matter a lot. "
+                            "Fourth keeps going so the total passes two hundred characters easily. Fifth ends it.";
+  CHECK(tts::chunks(longAnswer).size() > 1, "Groq's cap splits it");
+  const auto one = tts::chunks(longAnswer, gemini::kMaxSpeakChars, 1);
+  CHECK(one.size() == 1 && one[0] == longAnswer, "one long piece for a provider without the cap");
+  String huge;
+  for (int i = 0; i < 40; ++i) huge += "This sentence is repeated to go past the limit. ";
+  const auto capped = tts::chunks(huge, gemini::kMaxSpeakChars, 1);
+  CHECK(capped.size() == 1 && capped[0].length() <= gemini::kMaxSpeakChars && capped[0].endsWith("."), "cut at a sentence end within the limit, got %u", (unsigned)capped[0].length());
+
+  CHECK(gemini::isKey("AIzaSyExample") && gemini::isKey("AQ.Ab8Example"), "both Google key shapes");
+  CHECK(!gemini::isKey("gsk_abc") && !gemini::isKey("") && !gemini::isKey("sk-ant-x"), "other keys are not Google's");
+
+  struct { const char* raw; const char* b64; } vectors[] = {{"", ""}, {"f", "Zg=="}, {"fo", "Zm8="}, {"foo", "Zm9v"},
+                                                         {"foob", "Zm9vYg=="}, {"fooba", "Zm9vYmE="}, {"foobar", "Zm9vYmFy"}};
+  for (const auto& v : vectors) {
+    char buf[16] = {};
+    const size_t n = gemini::base64Encode(reinterpret_cast<const uint8_t*>(v.raw), strlen(v.raw), buf);
+    CHECK(std::string(buf, n) == v.b64 && n == gemini::base64Length(strlen(v.raw)), "encode '%s' -> '%s'", v.raw, std::string(buf, n).c_str());
+    gemini::Base64Decoder d;
+    std::string back;
+    uint8_t b;
+    for (const char* p = v.b64; *p; ++p) {
+      if (d.feed(*p, b)) back.push_back(static_cast<char>(b));
+    }
+    CHECK(back == v.raw, "decode '%s' -> '%s'", v.b64, back.c_str());
+  }
+  // Every byte value, encoded in 3-byte-aligned pieces as the uploader does, decodes back the same.
+  std::vector<uint8_t> all(1000);
+  for (size_t i = 0; i < all.size(); ++i) all[i] = static_cast<uint8_t>(i * 7 + (i >> 3));
+  std::string b64;
+  for (size_t at = 0; at < all.size(); at += 300) {
+    char buf[400];
+    b64.append(buf, gemini::base64Encode(all.data() + at, std::min<size_t>(300, all.size() - at), buf));
+  }
+  CHECK(b64.size() == gemini::base64Length(all.size()), "pieces of 300 bytes add up to one valid encoding");
+  const std::string round = decodeAll("{\"data\":\"" + b64 + "\"}");
+  CHECK(round.size() == all.size() && memcmp(round.data(), all.data(), all.size()) == 0, "round trip through the scanner");
+
+  // The shape Gemini really sends, with a decoy "data" as a value and an escaped quote before the audio.
+  const std::string reply = "{\n \"candidates\": [{\"content\": {\"parts\": [{\"inlineData\": {\"mimeType\": \"audio/wav\",\n"
+                            "  \"note\": \"data\", \"quote\": \"say \\\"data\\\": now\",\n  \"data\": \"UklGRg==\"\n}}], \"role\": \"model\"}}],"
+                            " \"modelVersion\": \"x\", \"data\": \"AAAA\"}";
+  CHECK(decodeAll(reply) == "RIFF", "finds the audio and stops after it, got '%s'", decodeAll(reply).c_str());
+  gemini::AudioScanner none;
+  uint8_t b;
+  bool any = false;
+  for (char c : std::string("{\"error\":{\"code\":429,\"message\":\"quota\",\"data\":7}}")) any = any || none.feed(c, b);
+  CHECK(!any && !none.started(), "an error reply has no audio");
+  gemini::AudioScanner cut;
+  for (char c : std::string("{\"data\":\"UklG")) cut.feed(c, b);
+  CHECK(cut.started() && !cut.done(), "a reply cut mid-audio is not done");
+
+  uint8_t header[44];
+  gemini::pcmHeader(header);
+  SD.reset();
+  SD.files["/h.wav"] = std::vector<uint8_t>(header, header + 44);
+  for (int i = 0; i < 4800; ++i) SD.files["/h.wav"].push_back(static_cast<uint8_t>(i));
+  File f = SD.open("/h.wav", FILE_READ);
+  tts::WavFormat w;
+  String err;
+  CHECK(tts::parseWav(f, w, err) && w.rate == 24000 && w.channels == 1 && w.bits == 16 && w.dataOffset == 44 && w.dataBytes == 4800,
+        "the player accepts the bare-PCM header: %s rate %u bytes %u", err.c_str(), (unsigned)w.rate, (unsigned)w.dataBytes);
+
+  JsonDocument stt = parseJson(gemini::sttPrefix() + "UklGRg==" + gemini::sttSuffix("de"));
+  CHECK(String((const char*)stt["contents"][0]["parts"][0]["inline_data"]["mime_type"]) == "audio/wav" &&
+            String((const char*)stt["contents"][0]["parts"][0]["inline_data"]["data"]) == "UklGRg==",
+        "the recording sits between the two halves as valid JSON");
+  CHECK(String((const char*)stt["contents"][0]["parts"][1]["text"]).indexOf("language code is de") > 0, "the dictation language is passed on");
+  CHECK(String((const char*)parseJson(gemini::sttPrefix() + gemini::sttSuffix(""))["contents"][0]["parts"][1]["text"]).indexOf("language") < 0, "and left out on Auto");
+
+  JsonDocument tts1 = parseJson(gemini::ttsBody("Hello \"there\".\nBye", 4));
+  CHECK(String((const char*)tts1["contents"][0]["parts"][0]["text"]) == "Hello \"there\".\nBye", "text is sent bare and escaped");
+  CHECK(String((const char*)tts1["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"]) == "Orus" &&
+            String((const char*)tts1["generationConfig"]["responseModalities"][0]) == "AUDIO",
+        "voice by index, audio asked for");
+  CHECK(String((const char*)parseJson(gemini::ttsBody("x", 99))["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"]) == "Kore", "an out-of-range voice falls back to the first");
+  String longText;
+  for (int i = 0; i < 100; ++i) longText += "0123456789";
+  CHECK(String((const char*)parseJson(gemini::ttsBody(longText, 0))["contents"][0]["parts"][0]["text"]).length() == gemini::kMaxSpeakChars, "long text is cut");
+  CHECK(sizeof gemini::kVoices / sizeof gemini::kVoices[0] == sizeof tts::kVoices / sizeof tts::kVoices[0], "one Gemini voice per menu voice");
+  CHECK(gemini::path(gemini::kTtsModel) == "/v1beta/models/gemini-3.8-flash-lite-tts:generateContent", "path");
+}
+
 int main() {
   testChunks();
   testPromptHistory();
@@ -1654,6 +1752,7 @@ int main() {
   testAgentMessages();
   testApprovals();
   testUsage();
+  testGeminiCodec();
   testRelay();
   testAgentForm();
   testAgentStore();

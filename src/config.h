@@ -1,7 +1,7 @@
 // Kloudputer — settings: what was set up from a phone (kept in NVS) outranks files on the SD card,
 // which stay as a fallback. The SD files are /keys.txt, then /kloudputer/config.txt, which overrides it.
 // Format: KEY=VALUE per line, '#' starts a comment line.
-//   ANTHROPIC_API_KEY=sk-ant-...   GROQ_API_KEY=gsk_...   WIFI_SSID=...   WIFI_PASS=...   MODEL=claude-haiku-5-5
+//   ANTHROPIC_API_KEY=sk-ant-...   GROQ_API_KEY=gsk_... (or GEMINI_API_KEY=...)   WIFI_SSID=...   WIFI_PASS=...   MODEL=claude-haiku-5-5
 //   TZ=<+04>-4   (POSIX time zone for dates on screen; UTC when absent)
 #pragma once
 #ifdef ARDUINO
@@ -45,7 +45,7 @@ inline void parseConfig(File& f, Config& c) {
       v = v.substring(1, v.length() - 1);
     }
     if (k == "ANTHROPIC_API_KEY") c.anthropicKey = v;
-    else if (k == "GROQ_API_KEY") c.groqKey = v;
+    else if (k == "GROQ_API_KEY" || k == "GEMINI_API_KEY") c.groqKey = v;  // one voice key, either provider
     else if (k == "WIFI_SSID") c.wifiSsid = v;
     else if (k == "WIFI_PASS" || k == "WIFI_PASSWORD") c.wifiPass = v;
     else if (k == "MODEL" || k == "CLAUDE_MODEL") c.model = v;

@@ -45,7 +45,7 @@ void voiceCommand(const String& arg) {
   }
   const bool on = pick || (arg.isEmpty() ? !voiceReplies : arg == "on");
   if (on && cfg.groqKey.isEmpty()) {
-    view.add("Voice needs a Groq key. Type /setup to add one.", ui::ERR);
+    view.add("Voice needs a Groq or Gemini key. Type /setup to add one.", ui::ERR);
     return;
   }
   voiceReplies = on;
@@ -134,8 +134,8 @@ void showInfo() {
                "  clock " + (timeOk ? "ok" : "unsynced"),
            ui::DIM);
   view.add("model " + cfg.model + "  tz " + cfg.tz, ui::DIM);
-  view.add("claude key " + (cfg.anthropicKey.length() ? cfg.anthropicFrom : String("MISSING")) + "  groq key " +
-               (cfg.groqKey.length() ? cfg.groqFrom : String("-")),
+  view.add("claude key " + (cfg.anthropicKey.length() ? cfg.anthropicFrom : String("MISSING")) + "  voice key " +
+               (cfg.groqKey.length() ? String(gemini::isKey(cfg.groqKey) ? "Gemini, " : "Groq, ") + cfg.groqFrom : String("-")),
            ui::DIM);
   view.add(String("voice ") + (voiceReplies ? "on" : "off") + " " + voiceName + "  vol " + String(volume) + "/10",
            ui::DIM);

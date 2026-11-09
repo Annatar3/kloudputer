@@ -9,6 +9,7 @@
 #include "agent_proto.h"
 #include "brand.h"
 #include "config.h"
+#include "gemini_codec.h"
 #include "text.h"
 
 namespace phone {
@@ -106,7 +107,7 @@ struct Field {
 };
 constexpr Field kFields[] = {
     {"ssid", "The Wi-Fi name", &Form::ssid},       {"pass", "The Wi-Fi password", &Form::wifiPass},
-    {"akey", "The Anthropic key", &Form::anthropicKey}, {"gkey", "The Groq key", &Form::groqKey},
+    {"akey", "The Anthropic key", &Form::anthropicKey}, {"gkey", "The voice key", &Form::groqKey},
     {"model", "The model", &Form::model},           {"tz", "The time zone", &Form::tz},
     {"aname", "The agent name", &Form::agentName},  {"acode", "The pairing code", &Form::agentCode},
     {"arelay", "The relay", &Form::agentRelay},
@@ -191,7 +192,9 @@ inline String validate(const Form& f, bool haveAnthropicKey, const std::vector<C
   if (!printable(f.ssid, true) || !printable(f.wifiPass, true)) return "The Wi-Fi name or password has odd characters.";
   if (!printable(f.anthropicKey, false) || !printable(f.groqKey, false)) return "A key has spaces or odd characters in it.";
   if (f.anthropicKey.length() && !f.anthropicKey.startsWith("sk-ant-")) return "The Anthropic key should start with sk-ant-";
-  if (f.groqKey.length() && !f.groqKey.startsWith("gsk_")) return "The Groq key should start with gsk_";
+  if (f.groqKey.length() && !f.groqKey.startsWith("gsk_") && !gemini::isKey(f.groqKey)) {
+    return "The voice key should start with gsk_ (Groq), or AIza or AQ. (Gemini).";
+  }
   if (!haveAnthropicKey && f.anthropicKey.isEmpty()) return "Paste your Anthropic API key to finish setup.";
   if (f.model.length() && std::none_of(models.begin(), models.end(), [&f](const Choice& m) { return m.id == f.model; })) {
     return "Pick a model from the list.";
@@ -284,9 +287,9 @@ constexpr const char* kForm = R"HTML(<div><h1>{{PRODUCT}}</h1><p>Set up your {{T
 {{AKEY_NOTE}}<div class="pw"><input id="akey" name="akey" type="password" maxlength="256" placeholder="sk-ant-..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Anthropic API key"><button type="button" data-show="akey">Show</button></div>
 <p class="hint">Make one at console.anthropic.com, under API keys. What you chat is billed to that Anthropic account.</p>
 </section>
-<section><h2>Groq API key<small>optional</small></h2>
-{{GKEY_NOTE}}<div class="pw"><input id="gkey" name="gkey" type="password" maxlength="256" placeholder="gsk_..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Groq API key"><button type="button" data-show="gkey">Show</button></div>
-<p class="hint">Turns on voice: hold G0 to talk, and hear the answers. Free at console.groq.com/keys.</p>
+<section><h2>Voice key<small>optional</small></h2>
+{{GKEY_NOTE}}<div class="pw"><input id="gkey" name="gkey" type="password" maxlength="256" placeholder="gsk_... or AIza..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Voice key"><button type="button" data-show="gkey">Show</button></div>
+<p class="hint">Turns on voice: hold G0 to talk, and hear the answers. Use a free Groq key (console.groq.com/keys) or a Google Gemini key (aistudio.google.com/apikey).</p>
 </section>
 <section><h2>Agents<small>optional</small></h2>
 {{AGENTS}}<label for="aname">Pair an agent</label>

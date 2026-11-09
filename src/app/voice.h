@@ -46,7 +46,7 @@ void micTest() {
 void doVoice(ui::ChatView& v, String& buf) {
   const RelayHold hold;
   if (cfg.groqKey.isEmpty()) {
-    v.add("Voice needs a Groq key. Type /setup to add one.", ui::ERR);
+    v.add("Voice needs a Groq or Gemini key. Type /setup to add one.", ui::ERR);
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {

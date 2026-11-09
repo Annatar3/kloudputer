@@ -10,6 +10,7 @@
 #include "audio_adv.h"
 #include "brand.h"
 #include "certs.h"
+#include "gemini.h"
 #include "language.h"
 
 namespace voice {
@@ -147,10 +148,16 @@ struct Transcript {
   uint32_t ms = 0;
 };
 
-// Uploads the recording as multipart/form-data, streaming the WAV from SD in 2 KB pieces.
+// Transcribes the recording with the provider the voice key belongs to. For Groq, uploads it as
+// multipart/form-data, streaming the WAV from SD in 2 KB pieces.
 inline Transcript transcribe(const String& groqKey, const String& language) {
   Transcript t;
   const uint32_t t0 = millis();
+  if (gemini::isKey(groqKey)) {  // the voice key is a Google one
+    t.ok = gemini::transcribe(groqKey, kPath, language, t.text, t.error);
+    t.ms = millis() - t0;
+    return t;
+  }
   File f = SD.open(kPath, FILE_READ);
   if (!f) {
     t.error = "no recording on SD";

@@ -13,8 +13,9 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 ## What it does
 
 - **Chat with Claude.** The model can be Haiku, Sonnet, Opus or Fable, switched from the menu.
-- **Voice in.** Hold G0, speak, and release. The speech is transcribed with Groq's Whisper (a free Groq key).
-- **Voice out.** Answers are read aloud, with six voices to choose from. This uses Groq's text-to-speech.
+- **Voice in.** Hold G0, speak, and release. The speech is transcribed by Groq's Whisper or by Google Gemini, whichever
+  key you set.
+- **Voice out.** Answers are read aloud, with six voices to choose from, through the same provider.
 - **Saved conversations.** Every chat is saved to the SD card, so you can resume or delete it later.
 - **Web search.** Claude can look up current facts when a question needs them (on by default, switch it in the menu).
   Your Anthropic organization must allow web search, or Kloudputer turns it off for the session.
@@ -43,7 +44,9 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 - An M5Stack Cardputer **ADV**. The original Cardputer has different audio hardware and isn't supported yet.
 - A microSD card, for saved chats and spoken answers.
 - An Anthropic API key from console.anthropic.com. Usage is billed to your Anthropic account.
-- Optionally, a free Groq API key from console.groq.com/keys, for voice. Spoken answers use Groq's
+- Optionally, a voice key: a Google Gemini key from aistudio.google.com/apikey, or a free Groq key from
+  console.groq.com/keys. Groq answers faster; Gemini has no 200-character limit per spoken reply. With Groq, spoken
+  answers use Groq's
   `canopylabs/orpheus-v1-english` model, and you have to accept that model's terms once in the Groq console.
 
 ## Install

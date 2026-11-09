@@ -26,6 +26,10 @@ inline int anthropic(const String& key) {
 
 inline int groq(const String& key) { return get("https://api.groq.com/openai/v1/models", "Authorization", "Bearer " + key); }
 
+inline int gemini(const String& key) {
+  return get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", "x-goog-api-key", key);
+}
+
 inline bool works(int code) { return code == 200; }
 
 // "works", "rejected (401)", "couldn't be checked (read Timeout)"...
