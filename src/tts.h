@@ -13,6 +13,7 @@
 #include "audio_adv.h"
 #include "brand.h"
 #include "certs.h"
+#include "gemini.h"
 #include "ui.h"
 
 namespace tts {
@@ -196,6 +197,17 @@ inline Synth request(const String& groqKey, const char* voice, const String& tex
 
 // The sample_rate field is undocumented for Orpheus: once Groq rejects it, stop sending it.
 inline Synth synthesize(const String& groqKey, const char* voice, const String& text, const String& path) {
+  if (gemini::isKey(groqKey)) {  // the voice key is a Google AI key
+    Synth g;
+    const uint32_t t0 = millis();
+    size_t idx = 0;
+    for (size_t i = 0; i < sizeof(kVoices) / sizeof(kVoices[0]); ++i) {
+      if (strcmp(voice, kVoices[i]) == 0) idx = i;
+    }
+    g.ok = gemini::speak(groqKey, idx, text, path, g.bytes, g.status, g.error);
+    g.ms = millis() - t0;
+    return g;
+  }
   static bool askRate = true;
   Synth s = request(groqKey, voice, text, path, askRate);
   if (askRate && s.status == 400 && s.error.indexOf("sample_rate") >= 0) {

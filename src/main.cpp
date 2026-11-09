@@ -336,7 +336,7 @@ bool stopRequested() {
 // chunk fails (say, a rate limit), the ones already made still play.
 void speak(const String& text, ui::ChatView& v = view) {
   if (cfg.groqKey.isEmpty() || WiFi.status() != WL_CONNECTED) {
-    voiceError(cfg.groqKey.isEmpty() ? "needs a Groq key (/setup)" : "offline", v);
+    voiceError(cfg.groqKey.isEmpty() ? "needs a Gemini or Groq key (/setup)" : "offline", v);
     return;
   }
   const std::vector<String> parts = tts::chunks(text);
@@ -495,7 +495,7 @@ void micTest() {
 // Hold G0 to talk into `v`'s input line, `buf`; the transcript can be fixed there before Enter.
 void doVoice(ui::ChatView& v, String& buf) {
   if (cfg.groqKey.isEmpty()) {
-    v.add("Voice needs a Groq key. Type /setup to add one.", ui::ERR);
+    v.add("Voice needs a Gemini or Groq key. Type /setup to add one.", ui::ERR);
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
@@ -591,7 +591,7 @@ void voiceCommand(const String& arg) {
   }
   const bool on = pick || (arg.isEmpty() ? !voiceReplies : arg == "on");
   if (on && cfg.groqKey.isEmpty()) {
-    view.add("Voice needs a Groq key. Type /setup to add one.", ui::ERR);
+    view.add("Voice needs a Gemini or Groq key. Type /setup to add one.", ui::ERR);
     return;
   }
   voiceReplies = on;
@@ -677,7 +677,7 @@ void showInfo() {
                "  clock " + (timeOk ? "ok" : "unsynced"),
            ui::DIM);
   view.add("model " + cfg.model + "  tz " + cfg.tz, ui::DIM);
-  view.add("claude key " + (cfg.anthropicKey.length() ? cfg.anthropicFrom : String("MISSING")) + "  groq key " +
+  view.add("claude key " + (cfg.anthropicKey.length() ? cfg.anthropicFrom : String("MISSING")) + "  voice key " +
                (cfg.groqKey.length() ? cfg.groqFrom : String("-")),
            ui::DIM);
   view.add(String("voice ") + (voiceReplies ? "on" : "off") + " " + voiceName + "  vol " + String(volume) + "/10",
@@ -902,7 +902,7 @@ void afterSetup(const portal::Outcome& o) {
   if (o.end == End::Saved) {
     header.setNote("checking keys...", ui::SYS);
     if (cfg.anthropicKey.length()) reportKey("Anthropic", keycheck::anthropic(cfg.anthropicKey));
-    if (cfg.groqKey.length()) reportKey("Groq", keycheck::groq(cfg.groqKey));
+    if (cfg.groqKey.length()) reportKey(gemini::isKey(cfg.groqKey) ? "Gemini" : "Groq", keycheck::voice(cfg.groqKey));
   }
   refreshHeader();
 }
@@ -1178,7 +1178,7 @@ const MainRow kMainMenu[] = {
     {"Agents", agentsValue, agentsMenu, nullptr, nullptr},
     {"Voice",
      []() -> String {
-       if (cfg.groqKey.isEmpty()) return "needs Groq key";
+       if (cfg.groqKey.isEmpty()) return "needs voice key";
        return voiceReplies ? "on - " + String(voiceName) : String("off");
      },
      inMenu<voiceMenu>, nullptr, nullptr},

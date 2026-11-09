@@ -9,8 +9,8 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 ## What it does
 
 - **Chat with Claude.** The model can be Haiku, Sonnet, Opus or Fable, switched from the menu.
-- **Voice in.** Hold G0, speak, and release. The speech is transcribed with Groq's Whisper (a free Groq key).
-- **Voice out.** Answers are read aloud, with six voices to choose from. This uses Groq's text-to-speech.
+- **Voice in.** Hold G0, speak, and release. The speech is transcribed by Gemini (a free Google AI key) or Groq's Whisper (a free Groq key).
+- **Voice out.** Answers are read aloud, with six voices to choose from. This uses Gemini's or Groq's text-to-speech, whichever key you set.
 - **Saved conversations.** Every chat is saved to the SD card, so you can resume or delete it later.
 - **Setup from your phone.** Scan a QR code, and a setup page opens where you paste your keys and pick Wi-Fi.
   Tested on iPhone and Android.
@@ -25,7 +25,7 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 - An M5Stack Cardputer **ADV**. The original Cardputer has different audio hardware and isn't supported yet.
 - A microSD card, for saved chats and spoken answers.
 - An Anthropic API key from console.anthropic.com. Usage is billed to your Anthropic account.
-- Optionally, a free Groq API key from console.groq.com/keys, for voice. Spoken answers use Groq's
+- Optionally, a voice key, for voice: a free Gemini key from aistudio.google.com/apikey (starts with `AIza`), or a free Groq key from console.groq.com/keys. With Groq, spoken answers use
   `canopylabs/orpheus-v1-english` model, and you have to accept that model's terms once in the Groq console.
 
 ## Install

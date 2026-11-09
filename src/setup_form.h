@@ -106,7 +106,7 @@ struct Field {
 };
 constexpr Field kFields[] = {
     {"ssid", "The Wi-Fi name", &Form::ssid},       {"pass", "The Wi-Fi password", &Form::wifiPass},
-    {"akey", "The Anthropic key", &Form::anthropicKey}, {"gkey", "The Groq key", &Form::groqKey},
+    {"akey", "The Anthropic key", &Form::anthropicKey}, {"gkey", "The voice key", &Form::groqKey},
     {"model", "The model", &Form::model},           {"tz", "The time zone", &Form::tz},
     {"aname", "The agent name", &Form::agentName},  {"acode", "The pairing code", &Form::agentCode},
     {"arelay", "The relay", &Form::agentRelay},
@@ -191,7 +191,9 @@ inline String validate(const Form& f, bool haveAnthropicKey, const std::vector<C
   if (!printable(f.ssid, true) || !printable(f.wifiPass, true)) return "The Wi-Fi name or password has odd characters.";
   if (!printable(f.anthropicKey, false) || !printable(f.groqKey, false)) return "A key has spaces or odd characters in it.";
   if (f.anthropicKey.length() && !f.anthropicKey.startsWith("sk-ant-")) return "The Anthropic key should start with sk-ant-";
-  if (f.groqKey.length() && !f.groqKey.startsWith("gsk_")) return "The Groq key should start with gsk_";
+  if (f.groqKey.length() && !f.groqKey.startsWith("gsk_") && !f.groqKey.startsWith("AIza")) {
+    return "The voice key should start with AIza (Gemini) or gsk_ (Groq)";
+  }
   // An API key, or a paired agent (Claude Code on a PC, which can use a Claude Pro login), is enough to finish setup.
   if (!haveAnthropicKey && f.anthropicKey.isEmpty() && agents.empty() && f.agentCode.isEmpty()) {
     return "Paste your Anthropic API key, or pair an agent, to finish setup.";
@@ -295,9 +297,9 @@ constexpr const char* kForm = R"HTML(<div><h1>{{PRODUCT}}</h1><p>Set up your {{T
 <input id="arelay" name="arelay" value="{{KEPT_ARELAY}}" maxlength="128" placeholder="Relay: ntfy.sh unless you run your own" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Relay" style="margin-top:.5rem">
 <p class="hint">On a PC with Claude Code logged in, run <code>node kloudputer-connector.mjs chat</code> and paste the code it prints. The PC must stay on. Keep the code private: whoever has it can use that agent.</p>
 </section>
-<section><h2>Groq API key<small>optional</small></h2>
-{{GKEY_NOTE}}<div class="pw"><input id="gkey" name="gkey" type="password" maxlength="256" placeholder="gsk_..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Groq API key"><button type="button" data-show="gkey">Show</button></div>
-<p class="hint">Turns on voice: hold G0 to talk, and hear the answers. Free at console.groq.com/keys.</p>
+<section><h2>Voice key<small>optional</small></h2>
+{{GKEY_NOTE}}<div class="pw"><input id="gkey" name="gkey" type="password" maxlength="256" placeholder="AIza... or gsk_..." autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Voice API key"><button type="button" data-show="gkey">Show</button></div>
+<p class="hint">Turns on voice: hold G0 to talk, and hear the answers. A Gemini key (free at aistudio.google.com/apikey) or a Groq key (console.groq.com/keys).</p>
 </section>
 <section><h2>Model</h2>
 <select name="model" aria-label="Model">{{MODELS}}</select>
