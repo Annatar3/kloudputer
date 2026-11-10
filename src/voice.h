@@ -12,6 +12,7 @@
 #include "certs.h"
 #include "gemini.h"
 #include "language.h"
+#include "tls_diag.h"
 #include "vad.h"
 #include <memory>
 #include <new>
@@ -313,6 +314,7 @@ inline Transcript transcribe(const String& key, const String& language) {
   filter["error"]["message"] = true;
   JsonDocument doc;
   const DeserializationError de = deserializeJson(doc, c, DeserializationOption::Filter(filter));
+  const String state = de ? tlsState(c) : String();
   c.stop();
   t.ms = millis() - t0;
   t.status = code;
@@ -322,7 +324,7 @@ inline Transcript transcribe(const String& key, const String& language) {
     return t;
   }
   if (de) {
-    t.error = String("bad Groq reply: ") + de.c_str();
+    t.error = String("Groq's reply stopped early (") + de.c_str() + "; " + state + ")";
     return t;
   }
   t.text = String(doc["text"] | "");

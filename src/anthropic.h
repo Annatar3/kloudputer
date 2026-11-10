@@ -8,6 +8,7 @@
 #include <vector>
 #include "certs.h"
 #include "chat_request.h"
+#include "tls_diag.h"
 
 namespace {
 ChatResult post(const String& apiKey, const String& model, const std::vector<ChatMsg>& history,
@@ -21,7 +22,7 @@ ChatResult post(const String& apiKey, const String& model, const std::vector<Cha
   HTTPClient http;
   http.useHTTP10(true);  // no chunked encoding, so the JSON can be parsed straight off the stream
   http.setConnectTimeout(15000);
-  http.setTimeout(90000);  // a search adds several seconds
+  http.setTimeout(65000);  // the most this 16-bit setting holds; a web search can take a while
   if (!http.begin(client, "https://api.anthropic.com/v1/messages")) {
     r.error = "could not start HTTPS";
     return r;
@@ -45,6 +46,7 @@ ChatResult post(const String& apiKey, const String& model, const std::vector<Cha
   JsonDocument resp;
   const DeserializationError de =
       deserializeJson(resp, http.getStream(), DeserializationOption::Filter(filter));
+  const String state = de ? tlsState(client) : String();  // read before the connection is torn down
   http.end();
   r.ms = millis() - t0;
 
@@ -54,7 +56,7 @@ ChatResult post(const String& apiKey, const String& model, const std::vector<Cha
     return r;
   }
   if (de) {
-    r.error = String("bad reply: ") + de.c_str();
+    r.error = String("Claude's reply stopped early (") + de.c_str() + "; " + state + ")";
     return r;
   }
   readReply(resp, r);
