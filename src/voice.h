@@ -12,6 +12,9 @@
 #include "certs.h"
 #include "gemini.h"
 #include "language.h"
+#include "vad.h"
+#include <memory>
+#include <new>
 
 namespace voice {
 constexpr uint32_t kRate = 16000;
@@ -138,6 +141,104 @@ Recording record(KeepGoing keepGoing, OnTick onTick, uint32_t maxMs = 30000, boo
   r.rmsR = right.rms();
   r.peakToPeak = maxV - minV;
   r.mean = mono.n ? static_cast<int>(mono.sum / static_cast<int64_t>(mono.n)) : 0;
+  return r;
+}
+
+enum class Heard : uint8_t { Speech, Quiet, Stopped, Failed };
+
+struct Listening {
+  Heard what = Heard::Failed;
+  uint32_t ms = 0;      // length of the saved clip
+  float peak = 0;       // loudest 100 ms
+  float background = 0; // what the room measured as
+  String error;
+};
+
+// Hands-free recording for talk mode: waits for someone to speak and saves from just before they started until
+// they have stopped, to the same file record() uses. stop() ends it early (a key); onState(speaking) lets the UI
+// follow along. Gives up after quietMs without speech, and cuts a speech off at maxSpeechMs.
+template <class Stop, class OnState>
+Listening listen(Stop stop, OnState onState, uint32_t quietMs = 45000, uint32_t maxSpeechMs = 30000) {
+  Listening r;
+  // The 300 ms before speech is noticed, so the first word isn't clipped. Allocated only while listening: this
+  // memory has to be free again before the transcription's TLS session.
+  constexpr size_t kPre = 3;
+  std::unique_ptr<int16_t[]> pre(new (std::nothrow) int16_t[kPre * kChunk]);
+  if (!pre) {
+    r.error = "not enough memory to listen";
+    return r;
+  }
+  size_t preLen[kPre] = {};
+  size_t preAt = 0;
+  SD.mkdir(DATA_DIR);
+  File f = SD.open(kPath, FILE_WRITE);
+  if (!f) {
+    r.error = "can't write to SD";
+    return r;
+  }
+  const uint8_t placeholder[44] = {0};
+  f.write(placeholder, sizeof(placeholder));
+  if (!adv_audio::start(r.error)) {
+    f.close();
+    return r;
+  }
+  adv_audio::flush(g_stereo, sizeof(g_stereo));
+
+  vad::Detector detector;
+  uint32_t samples = 0, speechStart = 0, lastData = millis();
+  const uint32_t t0 = millis();
+  r.what = Heard::Quiet;
+  while (true) {
+    if (stop()) {
+      r.what = Heard::Stopped;
+      break;
+    }
+    const size_t got = adv_audio::read(g_stereo, sizeof(g_stereo), 300) / 4;  // frames
+    if (!got) {
+      if (millis() - lastData > 3000) {
+        r.what = Heard::Failed;
+        r.error = "the mic stopped giving data";
+        break;
+      }
+      continue;
+    }
+    lastData = millis();
+    LevelMeter frame;
+    for (size_t i = 0; i < got; ++i) {
+      const int m = (g_stereo[2 * i] + g_stereo[2 * i + 1]) / 2;
+      g_mono[i] = static_cast<int16_t>(m);
+      frame.add(m);
+    }
+    const float level = frame.rms();
+    const vad::Event event = detector.feed(level);
+    if (event == vad::Event::Started) {
+      for (size_t k = 0; k < kPre; ++k) {  // oldest first
+        const size_t slot = (preAt + k) % kPre;
+        f.write(reinterpret_cast<const uint8_t*>(pre.get() + slot * kChunk), preLen[slot] * 2);
+        samples += preLen[slot];
+      }
+      speechStart = millis();
+      onState(true);
+    }
+    if (detector.speaking() || event == vad::Event::Ended) {
+      f.write(reinterpret_cast<const uint8_t*>(g_mono), got * 2);
+      samples += got;
+      if (level > r.peak) r.peak = level;
+    } else {
+      memcpy(pre.get() + preAt * kChunk, g_mono, got * 2);
+      preLen[preAt] = got;
+      preAt = (preAt + 1) % kPre;
+    }
+    if (event == vad::Event::Ended || (detector.speaking() && millis() - speechStart > maxSpeechMs)) {
+      r.what = Heard::Speech;
+      break;
+    }
+    if (!detector.speaking() && millis() - t0 > quietMs) break;
+  }
+  r.background = detector.background();
+  writeWavHeader(f, samples);
+  f.close();
+  r.ms = samples * 1000 / kRate;
   return r;
 }
 

@@ -66,22 +66,6 @@ void showReport(AgentLink& a) {
   }
 }
 
-// Two short rising tones, so a request gets noticed from a pocket or across a desk.
-void beep() {
-  constexpr int kFrames = adv_audio::kRate * 140 / 1000;
-  static int16_t tone[2 * kFrames];
-  for (int i = 0; i < kFrames; ++i) {
-    const float hz = i < kFrames / 2 ? 880.0f : 1320.0f;
-    const float fade = std::min(1.0f, std::min(i % (kFrames / 2), kFrames / 2 - i % (kFrames / 2)) / 60.0f);
-    const int16_t v = static_cast<int16_t>(9000 * fade * sinf(2.0f * PI * hz * i / adv_audio::kRate));
-    tone[2 * i] = tone[2 * i + 1] = v;
-  }
-  adv_audio::unmute();
-  adv_audio::write(tone, sizeof tone);
-  adv_audio::drain();
-  adv_audio::mute();
-}
-
 bool sendApprove(AgentLink& a, const String& req, bool allow) {
   const String body = agent::seal(a.keys.keyUp, a.keys.topicUp, agent::buildApprove(a.job, ++a.n, time(nullptr), req, allow));
   return body.length() && a.relay.publish(a.keys.topicUp, body);

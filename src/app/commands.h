@@ -4,6 +4,7 @@
 
 void showHelp() {
   view.add("Type or hold G0 to talk. Enter sends.", ui::DIM);
+  view.add("Tap G0 twice (or /talk): talk mode", ui::DIM);
   view.add("Tab    menu: sessions, voice, model", ui::DIM);
   view.add("Fn+; Fn+.  earlier prompts", ui::DIM);
   view.add("Fn+, Fn+/  scroll   Fn+`  clear", ui::DIM);
@@ -142,6 +143,11 @@ void showInfo() {
            ui::DIM);
   view.add(String("voice ") + (voiceReplies ? "on" : "off") + " " + voiceName + "  vol " + String(volume) + "/10",
            ui::DIM);
+  if (talkRoom >= 0) {
+    view.add("talk mode heard: room " + String(talkRoom, 0) + ", voice " + (talkPeak >= 0 ? String(talkPeak, 0) : String("-")) +
+                 " (starts at " + String(static_cast<int>(vad::Tuning().minLevel)) + " or 3x the room)",
+             ui::DIM);
+  }
   view.add("agents " + String(static_cast<int>(loadAgents().size())) + " paired  crypto " + (cryptoOk ? "ok" : "FAIL"),
            cryptoOk ? ui::DIM : ui::ERR);
 }

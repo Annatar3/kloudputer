@@ -161,7 +161,7 @@ void sendPrompt(const String& text) {
   Serial.printf("[chat] -> %u chars, %u msgs, heap=%u maxblk=%u\n", text.length(), history.size(),
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   RequestOptions opts;
-  opts.spoken = voiceReplies;
+  opts.spoken = voiceReplies || talking;
   opts.webSearch = webSearch;
   opts.notes = memory.joined();
   const ChatResult r = anthropicChat(cfg.anthropicKey, cfg.model, history, opts);
@@ -177,7 +177,7 @@ void sendPrompt(const String& text) {
     view.addClaude(r.text);
     const bool firstTurn = session.id.isEmpty();
     saveTurn(text, r.text);
-    if (voiceReplies) speak(r.text);
+    if (voiceReplies || talking) speak(r.text);
     if (firstTurn) nameSession(text, r.text);
     header.setNote(String(r.ms / 100 / 10.0, 1) + "s " + r.inTok + "/" + r.outTok + " tok" +
                        (r.searches ? " " + String(r.searches) + " web" : String()),

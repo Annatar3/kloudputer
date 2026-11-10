@@ -26,6 +26,7 @@
 #include "usage.h"
 #include "voice.h"
 #include "voicepick.h"
+#include "talk_words.h"
 
 // The loop task runs every TLS handshake. From the agent screen, voice upload sits ~7 calls deep (menu, agents,
 // agent screen, voice, Groq, TLS) and overflowed the default 8 KB stack. /info shows the measured headroom.
@@ -33,7 +34,7 @@ constexpr size_t kLoopStack = 16 * 1024;
 size_t getArduinoLoopTaskStackSize() { return kLoopStack; }
 
 namespace {
-constexpr const char* kVersion = "v1.9";
+constexpr const char* kVersion = "v1.10";
 constexpr float kSilentRms = 20;  // clip RMS (around its mean) below this is treated as silence
 constexpr size_t kMaxInput = 2000;
 constexpr size_t kMaxHistoryMsgs = 10;
@@ -82,6 +83,19 @@ bool webSearch = true;  // let Claude search the web; off for the session if the
 int boardId = -1;
 bool sdOk = false;
 bool timeOk = false;
+float talkRoom = -1, talkPeak = -1;  // the last talk-mode turn's background and loudest level, for /info
+bool talking = false;  // talk mode is running: answers are spoken whatever the Spoken answers setting says
+
+// Presses of G0, counted by interrupt so that two quick taps are seen even while the recorder is busy reading
+// the microphone. A press counts only when the line was steady for 40 ms, which drops contact bounce.
+volatile uint32_t g0Presses = 0;
+volatile uint32_t g0LastEdgeMs = 0;
+void IRAM_ATTR onG0Edge() {
+  const uint32_t now = millis();
+  if (digitalRead(0) == LOW && now - g0LastEdgeMs > 40) g0Presses = g0Presses + 1;
+  g0LastEdgeMs = now;
+}
+
 bool voiceReplies = false;  // speak Claude's answers; never on without a Groq key
 const char* voiceName = tts::kVoices[0];
 int volume = 8;             // speaker 1-10
@@ -320,6 +334,7 @@ void chooseModel() {
 #include "app/speech.h"
 #include "app/chat.h"
 #include "app/voice.h"
+#include "app/talk.h"
 #include "app/commands.h"
 #include "app/menus.h"
 #include "app/setup.h"
@@ -458,6 +473,7 @@ void handleCommand(const String& line) {
   else if (cmd == "/sessions") openMenu(sessionsMenu);
   else if (cmd == "/setup") openMenu(setupFromPhone);
   else if (cmd == "/pair") pairCommand(arg);
+  else if (cmd == "/talk") talkMode();
   else if (cmd == "/remember") remember(arg);
   else if (cmd == "/notes") showNotes();
   else if (cmd == "/forget") forget(arg);
@@ -481,6 +497,7 @@ void setup() {
   agentView.begin(display);
   menu.begin(display);
   ui::splash(display, kVersion);
+  attachInterrupt(digitalPinToInterrupt(0), onG0Edge, CHANGE);  // G0 is on GPIO0; M5Unified keeps polling it too
 
   bootStep("starting keyboard...", 0);
   startKeyboard();
@@ -528,7 +545,11 @@ void setup() {
 
 void loop() {
   const KeyEvent ev = pollKeys(input);  // also updates button state
-  if (M5Cardputer.BtnA.wasPressed()) doVoice(view, input);
+  if (M5Cardputer.BtnA.wasPressed()) {
+    bool doubleTap = false;
+    doVoice(view, input, &doubleTap);
+    if (doubleTap) talkMode();
+  }
   if (ev.tab) openMenu(mainMenu);
   if (ev.left) view.scroll(3);
   if (ev.right) view.scroll(-3);

@@ -14,6 +14,8 @@
 #include "usage.h"
 #include "gemini_codec.h"
 #include "voicepick.h"
+#include "vad.h"
+#include "talk_words.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...)                                     \
@@ -1788,6 +1790,84 @@ static void testTwoVoiceKeys() {
   CHECK(now.hasGroq && now.hasGemini && now.geminiTail == "k4Jh", "the page knows both are saved and shows only a tail");
 }
 
+// Feeds a run of frames at one level and returns the events it produced, as letters.
+static std::string hear(vad::Detector& d, float level, int frames) {
+  std::string out;
+  for (int i = 0; i < frames; ++i) {
+    const vad::Event e = d.feed(level);
+    if (e == vad::Event::Started) out += 'S';
+    if (e == vad::Event::Ended) out += 'E';
+  }
+  return out;
+}
+
+static void testVad() {
+  {
+    vad::Detector d;
+    CHECK(hear(d, 12, 600) == "" && !d.speaking(), "a quiet minute is not speech");
+    CHECK(d.threshold() == 60, "a quiet room keeps the lowest bar, got %.0f", d.threshold());
+  }
+  {
+    vad::Detector d;
+    hear(d, 15, 5);
+    CHECK(hear(d, 300, 1) == "" && hear(d, 15, 3) == "", "one loud 100 ms (a click) doesn't start it");
+    CHECK(hear(d, 300, 1) == "" && hear(d, 300, 1) == "S" && d.speaking(), "200 ms of sound in a row does");
+    CHECK(hear(d, 250, 20) == "", "it stays on while the talking goes on");
+    CHECK(hear(d, 15, 6) == "" && hear(d, 200, 3) == "" && d.speaking(), "a 600 ms breath between sentences doesn't end it");
+    CHECK(hear(d, 15, 11) == "" && hear(d, 15, 1) == "E" && !d.speaking(), "1.2 s of quiet does");
+    CHECK(hear(d, 15, 30) == "", "and it stays ended in the quiet after");
+    CHECK(hear(d, 300, 2) == "S", "a second sentence starts it again");
+  }
+  {
+    vad::Detector d;
+    CHECK(hear(d, 500, 3) == "", "the first 300 ms only measures the room, even if it is loud");
+    CHECK(hear(d, 15, 10) == "", "then quiet");
+    CHECK(d.background() < 30, "the background estimate falls fast once it hears real quiet, got %.0f", d.background());
+    CHECK(hear(d, 120, 2) == "S", "so a normal voice is heard afterwards");
+  }
+  {
+    vad::Detector d;
+    hear(d, 300, 3);  // someone talking from the very first frame
+    CHECK(d.threshold() == 400, "the bar is capped, got %.0f", d.threshold());
+    CHECK(hear(d, 600, 2) == "S", "so a clear voice still gets through");
+  }
+  {
+    vad::Detector d;  // a fan: steady 90
+    hear(d, 90, 20);
+    CHECK(!d.speaking() && d.threshold() > 250 && d.threshold() < 290, "a steady noise raises the bar to three times it, got %.0f", d.threshold());
+    CHECK(hear(d, 200, 10) == "", "something only twice as loud as the fan is not speech");
+    CHECK(hear(d, 350, 2) == "S", "a voice well above it is");
+    CHECK(hear(d, 90, 12) == "E", "and falling back to the fan's level ends it");
+  }
+  {
+    vad::Detector d;
+    hear(d, 15, 5);
+    hear(d, 55, 400);  // murmur just under the bar for 40 s
+    CHECK(d.background() < 60 && d.threshold() <= 180, "the background estimate follows a rising room slowly, got %.0f", d.background());
+    hear(d, 15, 10);
+    for (int i = 0; i < 50; ++i) d.feed(i % 2 ? 500 : 15);  // alternating clicks never give two loud frames in a row
+    CHECK(!d.speaking(), "separate clicks don't add up to speech");
+    CHECK(d.background() < 30, "and loud frames don't teach it a louder room, got %.0f", d.background());
+  }
+  {
+    vad::Tuning quick;
+    quick.endFrames = 3;
+    quick.startFrames = 1;
+    vad::Detector d(quick);
+    hear(d, 10, 3);
+    CHECK(hear(d, 100, 1) == "S" && hear(d, 10, 3) == "E", "the tuning is what decides the counts");
+  }
+}
+
+static void testTalkWords() {
+  for (const char* yes : {"stop", "Stop.", " STOP! ", "Goodbye.", "bye bye", "That's all.", "thats all", "Stop listening", "Exit"}) {
+    CHECK(talk::saysStop(yes), "'%s' ends talk mode", yes);
+  }
+  for (const char* no : {"", "stop the deploy", "don't stop", "is it time to say goodbye to this pod", "stopwatch", "that's all I know about it", "bye for now"}) {
+    CHECK(!talk::saysStop(no), "'%s' is for Claude, not a stop", no);
+  }
+}
+
 int main() {
   testChunks();
   testPromptHistory();
@@ -1835,6 +1915,8 @@ int main() {
   testUsage();
   testGeminiCodec();
   testVoicePick();
+  testVad();
+  testTalkWords();
   testTwoVoiceKeys();
   testRelay();
   testAgentForm();

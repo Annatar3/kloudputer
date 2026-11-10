@@ -42,9 +42,30 @@ void micTest() {
            rec.rms >= kSilentRms ? ui::GREEN : ui::SYS);
 }
 
+// Transcribes the clip just recorded with the preferred voice provider, and with the other one when the first
+// answers with an error.
+voice::Transcript transcribeRecording() {
+  const voicepick::Plan plan = voicePlan();
+  voice::Transcript t = voice::transcribe(voiceKey(plan.first), lang::kLanguages[dictation].code);
+  Serial.printf("[voice] stt %s ok=%d http=%d %ums text=%s err=%s heap=%u\n", voicepick::name(plan.first), t.ok, t.status,
+                t.ms, t.text.c_str(), t.error.c_str(), ESP.getFreeHeap());
+  if (!t.ok && plan.hasSecond && voicepick::worthFallback(t.status)) {
+    voiceRefused(plan.first, t.status);
+    header.setNote(String(voicepick::name(plan.second)) + " instead...", ui::SYS);
+    const String firstError = t.error;
+    t = voice::transcribe(voiceKey(plan.second), lang::kLanguages[dictation].code);
+    Serial.printf("[voice] stt %s ok=%d http=%d %ums err=%s\n", voicepick::name(plan.second), t.ok, t.status, t.ms,
+                  t.error.c_str());
+    if (!t.ok) t.error = firstError + "; then " + t.error;
+  }
+  return t;
+}
+
 // Hold G0 to talk into `v`'s input line, `buf`; the transcript can be fixed there before Enter.
-void doVoice(ui::ChatView& v, String& buf) {
+// `doubleTap`, when given, is set if G0 was tapped twice instead of held: the chat starts talk mode on that.
+void doVoice(ui::ChatView& v, String& buf, bool* doubleTap = nullptr) {
   const RelayHold hold;
+  const uint32_t pressesAtStart = g0Presses, startedAt = millis();
   if (!haveVoiceKey()) {
     v.add("Voice needs a Groq or Gemini key. Type /setup to add one.", ui::ERR);
     return;
@@ -63,8 +84,18 @@ void doVoice(ui::ChatView& v, String& buf) {
       [](uint32_t ms) { header.setNote("REC " + String(ms / 1000.0, 1) + "s", ui::ERR); });
   Serial.printf("[voice] rec ok=%d %ums samples=%u rms=%.0f L=%.0f R=%.0f p2p=%d err=%s\n", rec.ok, rec.ms,
                 rec.samples, rec.rms, rec.rmsL, rec.rmsR, rec.peakToPeak, rec.error.c_str());
+  if (rec.ok && rec.ms < 400 && doubleTap) {  // a tap, not a hold: give a second tap a moment to arrive
+    while (g0Presses == pressesAtStart && millis() - startedAt < 550) delay(5);
+    if (g0Presses != pressesAtStart) {
+      *doubleTap = true;
+      refreshHeader();
+      v.setInput(buf);
+      return;
+    }
+  }
   if (!rec.ok || rec.ms < 400) {
-    v.add(rec.ok ? "Too short - hold G0 while you talk." : "Voice: " + rec.error, rec.ok ? ui::SYS : ui::ERR);
+    v.add(rec.ok ? "Too short - hold G0 to talk, or tap it twice for talk mode." : "Voice: " + rec.error,
+          rec.ok ? ui::SYS : ui::ERR);
     refreshHeader();
     v.setInput(buf);
     return;
@@ -79,19 +110,7 @@ void doVoice(ui::ChatView& v, String& buf) {
   }
   header.setNote("level " + String(rec.rms, 0) + " - transcribing...", ui::SYS);
   v.setInput("", "... ");
-  const voicepick::Plan plan = voicePlan();
-  voice::Transcript t = voice::transcribe(voiceKey(plan.first), lang::kLanguages[dictation].code);
-  Serial.printf("[voice] stt %s ok=%d http=%d %ums text=%s err=%s heap=%u\n", voicepick::name(plan.first), t.ok, t.status,
-                t.ms, t.text.c_str(), t.error.c_str(), ESP.getFreeHeap());
-  if (!t.ok && plan.hasSecond && voicepick::worthFallback(t.status)) {
-    voiceRefused(plan.first, t.status);
-    header.setNote(String(voicepick::name(plan.second)) + " instead...", ui::SYS);
-    const String firstError = t.error;
-    t = voice::transcribe(voiceKey(plan.second), lang::kLanguages[dictation].code);
-    Serial.printf("[voice] stt %s ok=%d http=%d %ums err=%s\n", voicepick::name(plan.second), t.ok, t.status, t.ms,
-                  t.error.c_str());
-    if (!t.ok) t.error = firstError + "; then " + t.error;
-  }
+  const voice::Transcript t = transcribeRecording();
   lastHeaderMs = millis();
   if (!t.ok) {
     v.add("Voice: " + t.error, ui::ERR);
