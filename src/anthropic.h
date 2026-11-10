@@ -17,7 +17,7 @@ ChatResult post(const String& apiKey, const String& model, const std::vector<Cha
   const uint32_t t0 = millis();
   String body = requestBody(model, history, opts);
 
-  WiFiClientSecure client;
+  TlsClient client;
   client.setCACert(kRootCAs);
   HTTPClient http;
   http.useHTTP10(true);  // no chunked encoding, so the JSON can be parsed straight off the stream
@@ -44,9 +44,11 @@ ChatResult post(const String& apiKey, const String& model, const std::vector<Cha
   JsonDocument filter;
   replyFilter(filter);
   JsonDocument resp;
-  const DeserializationError de =
-      deserializeJson(resp, http.getStream(), DeserializationOption::Filter(filter));
-  const String state = de ? tlsState(client) : String();  // read before the connection is torn down
+  CountedReader reader{http.getStream()};
+  const DeserializationError de = deserializeJson(resp, reader, DeserializationOption::Filter(filter));
+  const String state = de ? readFailure(client, reader) : String();
+  Serial.printf("[chat] body %u bytes in %lu ms tls=%d\n", static_cast<unsigned>(reader.bytes), millis() - reader.startedMs,
+                client.lastReadError);
   http.end();
   r.ms = millis() - t0;
 

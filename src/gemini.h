@@ -86,10 +86,9 @@ inline bool transcribe(const String& key, const char* wavPath, const String& lan
   filter["candidates"][0]["content"]["parts"][0]["text"] = true;
   JsonDocument doc;
   const DeserializationError de = deserializeJson(doc, c, DeserializationOption::Filter(filter));
-  const String state = de ? tlsState(c) : String();
   c.stop();
   if (de) {
-    error = String("Gemini's reply stopped early (") + de.c_str() + "; " + state + ")";
+    error = String("Gemini's reply stopped early (") + de.c_str() + ")";
     return false;
   }
   text = "";

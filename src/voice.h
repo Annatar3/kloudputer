@@ -314,7 +314,6 @@ inline Transcript transcribe(const String& key, const String& language) {
   filter["error"]["message"] = true;
   JsonDocument doc;
   const DeserializationError de = deserializeJson(doc, c, DeserializationOption::Filter(filter));
-  const String state = de ? tlsState(c) : String();
   c.stop();
   t.ms = millis() - t0;
   t.status = code;
@@ -324,7 +323,7 @@ inline Transcript transcribe(const String& key, const String& language) {
     return t;
   }
   if (de) {
-    t.error = String("Groq's reply stopped early (") + de.c_str() + "; " + state + ")";
+    t.error = String("Groq's reply stopped early (") + de.c_str() + ")";
     return t;
   }
   t.text = String(doc["text"] | "");
