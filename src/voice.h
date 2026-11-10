@@ -7,7 +7,7 @@
 #include <M5Cardputer.h>
 #include <SD.h>
 #include <WiFiClientSecure.h>
-#include "audio_adv.h"
+#include "audio.h"
 #include "brand.h"
 #include "certs.h"
 #include "gemini.h"
@@ -94,25 +94,25 @@ Recording record(KeepGoing keepGoing, OnTick onTick, uint32_t maxMs = 30000, boo
   const uint8_t placeholder[44] = {0};
   f.write(placeholder, sizeof(placeholder));
 
-  if (!adv_audio::start(r.error)) {
+  if (!audio::start(r.error)) {
     f.close();
     return r;
   }
-  r.codecRegs = adv_audio::codecDump();
-  if (diagnose) {
+  if (audio::isAdv()) r.codecRegs = adv_audio::codecDump();
+  if (diagnose && audio::isAdv()) {
     r.bck = adv_audio::probePin(adv_audio::kBck);
     r.ws = adv_audio::probePin(adv_audio::kWs);
     r.din = adv_audio::probePin(adv_audio::kDin);
     r.lineTestNz = adv_audio::lineTestNonZeroPct(g_stereo, sizeof(g_stereo));
   }
-  adv_audio::flush(g_stereo, sizeof(g_stereo));
+  audio::flush(g_stereo, sizeof(g_stereo));
 
   LevelMeter mono, left, right;
   int minV = 32767, maxV = -32768;
   const uint32_t t0 = millis();
   uint32_t lastTick = 0;
   while (keepGoing() && millis() - t0 < maxMs) {
-    const size_t got = adv_audio::read(g_stereo, sizeof(g_stereo), 300) / 4;  // frames
+    const size_t got = audio::read(g_stereo, sizeof(g_stereo), 300) / 4;  // frames
     for (size_t i = 0; i < got; ++i) {
       const int l = g_stereo[2 * i];
       const int rr = g_stereo[2 * i + 1];
@@ -132,6 +132,7 @@ Recording record(KeepGoing keepGoing, OnTick onTick, uint32_t maxMs = 30000, boo
       onTick(millis() - t0);
     }
   }
+  audio::endCapture();
   writeWavHeader(f, r.samples);
   f.close();
 
@@ -179,11 +180,11 @@ Listening listen(Stop stop, OnState onState, uint32_t quietMs = 45000, uint32_t 
   }
   const uint8_t placeholder[44] = {0};
   f.write(placeholder, sizeof(placeholder));
-  if (!adv_audio::start(r.error)) {
+  if (!audio::start(r.error)) {
     f.close();
     return r;
   }
-  adv_audio::flush(g_stereo, sizeof(g_stereo));
+  audio::flush(g_stereo, sizeof(g_stereo));
 
   vad::Detector detector;
   uint32_t samples = 0, speechStart = 0, lastData = millis();
@@ -194,7 +195,7 @@ Listening listen(Stop stop, OnState onState, uint32_t quietMs = 45000, uint32_t 
       r.what = Heard::Stopped;
       break;
     }
-    const size_t got = adv_audio::read(g_stereo, sizeof(g_stereo), 300) / 4;  // frames
+    const size_t got = audio::read(g_stereo, sizeof(g_stereo), 300) / 4;  // frames
     if (!got) {
       if (millis() - lastData > 3000) {
         r.what = Heard::Failed;
@@ -236,6 +237,7 @@ Listening listen(Stop stop, OnState onState, uint32_t quietMs = 45000, uint32_t 
     }
     if (!detector.speaking() && millis() - t0 > quietMs) break;
   }
+  audio::endCapture();
   r.background = detector.background();
   writeWavHeader(f, samples);
   f.close();

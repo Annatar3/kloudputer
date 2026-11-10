@@ -6,18 +6,19 @@ void voiceError(const String& reason, ui::ChatView& v = view) { v.add("Voice rep
 
 // Two short rising tones, so a request gets noticed from a pocket or across a desk.
 void beep() {
-  constexpr int kFrames = adv_audio::kRate * 140 / 1000;
+  constexpr int kFrames = audio::kRate * 140 / 1000;
   static int16_t tone[2 * kFrames];
   for (int i = 0; i < kFrames; ++i) {
     const float hz = i < kFrames / 2 ? 880.0f : 1320.0f;
     const float fade = std::min(1.0f, std::min(i % (kFrames / 2), kFrames / 2 - i % (kFrames / 2)) / 60.0f);
-    const int16_t v = static_cast<int16_t>(9000 * fade * sinf(2.0f * PI * hz * i / adv_audio::kRate));
+    const int16_t v = static_cast<int16_t>(9000 * fade * sinf(2.0f * PI * hz * i / audio::kRate));
     tone[2 * i] = tone[2 * i + 1] = v;
   }
-  adv_audio::unmute();
-  adv_audio::write(tone, sizeof tone);
-  adv_audio::drain();
-  adv_audio::mute();
+  audio::unmute();
+  audio::write(tone, sizeof tone);
+  audio::drain();
+  audio::mute();
+  audio::endPlayback();
 }
 
 // Any key or G0. Reading the key press here consumes it, so it never lands in the input line.

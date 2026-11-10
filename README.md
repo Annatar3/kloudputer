@@ -1,6 +1,7 @@
 # Kloudputer
 
-An unofficial pocket client for Claude on the **M5Stack Cardputer ADV**. Type or talk to Claude, hear the answer
+An unofficial pocket client for Claude on the **M5Stack Cardputer ADV** (and, experimentally, the original
+Cardputer). Type or talk to Claude, hear the answer
 from the speaker, and pick up saved conversations later. Everything runs on the device itself, with your own API key.
 
 > Kloudputer is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by
@@ -45,7 +46,10 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 
 ## What you need
 
-- An M5Stack Cardputer **ADV**. The original Cardputer has different audio hardware and isn't supported yet.
+- An M5Stack Cardputer **ADV**. The same firmware file also starts on the **original Cardputer**: it detects the board
+  and uses that model's key matrix, PDM microphone and amplifier. That part is **experimental**. It was written from
+  the vendor's library without an original Cardputer to try it on, so typing and chat are likely to work and voice
+  may need tuning. Reports are welcome in the issues, with the `/info` and `/mic` output.
 - A microSD card, for saved chats and spoken answers.
 - An Anthropic API key from console.anthropic.com. Usage is billed to your Anthropic account.
 - Optionally, for voice: a free Groq key from console.groq.com/keys, a Google Gemini key from

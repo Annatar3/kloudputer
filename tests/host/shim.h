@@ -228,12 +228,12 @@ struct SDFake {
   }
 } SD;
 
-namespace adv_audio {
+namespace audio {
 constexpr uint32_t kRate = 16000;
 inline std::vector<int16_t> spoken;  // every frame written, interleaved L/R
 inline std::vector<size_t> writes;   // frames per write
 inline int unmutes = 0, mutes = 0, drains = 0;
-inline std::vector<char> events;     // order of u(nmute), m(ute), d(rain)
+inline std::vector<char> events;     // order of u(nmute), m(ute), d(rain), e(ndPlayback)
 inline bool write(const int16_t* f, size_t bytes) {
   spoken.insert(spoken.end(), f, f + bytes / 2);
   writes.push_back(bytes / 4);
@@ -242,8 +242,10 @@ inline bool write(const int16_t* f, size_t bytes) {
 inline void unmute() { ++unmutes; events.push_back('u'); }
 inline void mute() { ++mutes; events.push_back('m'); }
 inline void drain() { ++drains; events.push_back('d'); }
+inline void endPlayback() { events.push_back('e'); }
+inline bool isAdv() { return true; }
 inline void reset() { spoken.clear(); writes.clear(); events.clear(); unmutes = mutes = drains = 0; }
-}  // namespace adv_audio
+}  // namespace audio
 
 // NVS stand-in: namespace -> key -> value, kept for the whole test run like flash would be.
 inline std::map<std::string, std::map<std::string, std::string>> g_nvs;

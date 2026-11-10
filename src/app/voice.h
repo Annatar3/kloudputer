@@ -29,6 +29,11 @@ void micTest() {
   }
   view.add(String(rec.ms / 1000.0, 1) + "s  " + micSummary(rec) + " p2p " + String(rec.peakToPeak),
            rec.rms >= kSilentRms ? ui::GREEN : ui::ERR);
+  if (!audio::isAdv()) {  // the pin and codec checks below are about the ADV's codec
+    view.add(rec.rms >= kSilentRms ? "Mic works - G0 voice should too." : "Mic silent. Send me these numbers.",
+             rec.rms >= kSilentRms ? ui::GREEN : ui::SYS);
+    return;
+  }
   // Pin activity: BCK/WS should toggle a lot at ~50% high; a stuck pin means no clock at the codec.
   view.add("hi% bck " + String(rec.bck.highPct) + " ws " + String(rec.ws.highPct) + " din " +
                String(rec.din.highPct) + "  zeros-test nz " + String(rec.lineTestNz) + "%",

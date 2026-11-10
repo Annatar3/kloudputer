@@ -34,7 +34,7 @@ constexpr size_t kLoopStack = 16 * 1024;
 size_t getArduinoLoopTaskStackSize() { return kLoopStack; }
 
 namespace {
-constexpr const char* kVersion = "v1.10";
+constexpr const char* kVersion = "v2.0";
 constexpr float kSilentRms = 20;  // clip RMS (around its mean) below this is treated as silence
 constexpr size_t kMaxInput = 2000;
 constexpr size_t kMaxHistoryMsgs = 10;
@@ -108,15 +108,29 @@ sessions::Meta session;  // where this chat is saved; no id until its first turn
 bool saveWarned = false;
 
 // ---------- hardware ----------
+// Works out which Cardputer this is and starts its keyboard. The board id M5Unified reports has been wrong for
+// an ADV before, so the hardware decides: an ADV answers on I2C as a keyboard chip (TCA8418 at 0x34) and a codec
+// (ES8311 at 0x18) on SDA=8/SCL=9. An original has neither, and those two pins belong to its key matrix.
 void startKeyboard() {
   boardId = static_cast<int>(M5.getBoard());
-  // The ADV keyboard (TCA8418 @0x34) lives on SDA=8/SCL=9; bring that bus up if autodetect didn't.
   if (boardId != static_cast<int>(m5::board_t::board_M5CardputerADV) || !M5.In_I2C.isEnabled()) {
     M5.In_I2C.release();
     M5.In_I2C.begin(I2C_NUM_1, 8, 9);
   }
-  kb = new PollingTCA8418Reader();
-  M5Cardputer.Keyboard.begin(std::unique_ptr<KeyboardReader>(kb));
+  bool adv = false;
+  for (int attempt = 0; attempt < 3 && !adv; ++attempt) {  // asked more than once: a wrong "original" would leave an ADV with no keys
+    if (attempt) delay(20);
+    adv = M5.In_I2C.scanID(0x34) || adv_audio::codecPresent();
+  }
+  audio::g_classic = !adv;
+  if (adv) {
+    kb = new PollingTCA8418Reader();
+    M5Cardputer.Keyboard.begin(std::unique_ptr<KeyboardReader>(kb));
+    return;
+  }
+  M5.In_I2C.release();  // hand pins 8 and 9 back before the matrix reader claims them
+  M5Cardputer.Keyboard.begin(std::unique_ptr<KeyboardReader>(new IOMatrixKeyboardReader()));
+  classic_audio::configure();
 }
 
 // ---------- input ----------
@@ -296,7 +310,7 @@ void loadPrefs() {
     p.end();
   }
   voiceReplies = voice && haveVoiceKey();
-  adv_audio::setVolume(volume);
+  audio::setVolume(volume);
 }
 
 // The SD files, then what was saved on the Cardputer on top (phone setup, Model menu), then voice
@@ -462,8 +476,12 @@ void handleCommand(const String& line) {
   else if (cmd == "/info") showInfo();
   else if (cmd == "/mic") micTest();
   else if (cmd == "/codec") {
-    view.add("codec FD FE 00 01 02 09 0A 0D 0E 14 17:", ui::DIM);
-    view.add(adv_audio::codecDump(), ui::DIM);
+    if (audio::isAdv()) {
+      view.add("codec FD FE 00 01 02 09 0A 0D 0E 14 17:", ui::DIM);
+      view.add(adv_audio::codecDump(), ui::DIM);
+    } else {
+      view.add("The original Cardputer has no codec chip.", ui::DIM);
+    }
   } else if (cmd == "/model") {
     if (arg.length()) setModel(arg);
     else chooseModel();
@@ -502,7 +520,8 @@ void setup() {
   bootStep("starting keyboard...", 0);
   startKeyboard();
   String micErr;
-  const bool micOk = adv_audio::start(micErr);  // mic runs from boot: push-to-talk starts instantly
+  // On the ADV the mic runs from boot, so push-to-talk starts instantly. The original starts its mic per recording.
+  const bool micOk = !audio::isAdv() || audio::start(micErr);
 
   bootStep("reading SD card...", 1);
   SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
@@ -530,7 +549,7 @@ void setup() {
     bringUpNetwork();
   }
   Serial.printf("[boot] %s %s board=%d kb=%d mic=%d sd=%d cfg=%s wifi=%d time=%d groq=%d crypto=%d heap=%u\n",
-                brand::kProduct, kVersion, boardId, kb->ok(), adv_audio::codecPresent(), sdOk, cfg.source.c_str(),
+                brand::kProduct, kVersion, boardId, audio::isAdv() ? kb->ok() : -1, audio::isAdv() ? adv_audio::codecPresent() : -1, sdOk, cfg.source.c_str(),
                 WiFi.status() == WL_CONNECTED, timeOk, haveVoiceKey(), cryptoOk, ESP.getFreeHeap());
   view.add(haveVoiceKey() ? "Type or hold G0 to talk. Tab: menu." : "Ask me anything. Tab opens the menu.",
            ui::DIM);

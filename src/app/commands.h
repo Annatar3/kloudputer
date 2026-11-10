@@ -67,7 +67,7 @@ void voiceCommand(const String& arg) {
 
 void applyVolume(int v) {
   volume = v;
-  adv_audio::setVolume(v);
+  audio::setVolume(v);
   Preferences p;
   p.begin("cputer", false);
   p.putUChar("vol", v);
@@ -114,8 +114,9 @@ void showInfo() {
   view.add(String(brand::kProduct) + " " + kVersion + ", " + brand::kTagline + ".", ui::DIM);
   view.add(brand::kDisclaimer, ui::DIM);
   view.add("board " + String(boardId) +
-               (boardId == static_cast<int>(m5::board_t::board_M5CardputerADV) ? " (ADV)" : " (not ADV)") +
-               "  kbd " + (kb && kb->ok() ? "ok" : "FAIL") + "  codec " + (adv_audio::codecPresent() ? "ok" : "MISSING"),
+               (audio::isAdv() ? " (ADV)" : " (original, experimental)") +
+               (audio::isAdv() ? String("  kbd ") + (kb && kb->ok() ? "ok" : "FAIL") + "  codec " + (adv_audio::codecPresent() ? "ok" : "MISSING")
+                               : String("  key matrix, PDM mic")),
            ui::DIM);
   view.add("spent ~" + usage::money(spent.chat) + " chat  " + usage::money(usage::spentToday(spent, todayStamp())) + " today  " +
                usage::money(spent.total) + " total",

@@ -215,9 +215,9 @@ static void testResampler() {
 
 static std::vector<int16_t> monoOut() {
   std::vector<int16_t> m;
-  for (size_t i = 0; i + 1 < adv_audio::spoken.size(); i += 2) {
-    if (adv_audio::spoken[i] != adv_audio::spoken[i + 1]) return {};
-    m.push_back(adv_audio::spoken[i]);
+  for (size_t i = 0; i + 1 < audio::spoken.size(); i += 2) {
+    if (audio::spoken[i] != audio::spoken[i + 1]) return {};
+    m.push_back(audio::spoken[i]);
   }
   return m;
 }
@@ -225,7 +225,7 @@ static std::vector<int16_t> monoOut() {
 // Plays one clip and returns what the speaker got (empty if L and R differ).
 static std::vector<int16_t> render(const WavSpec& sp, const std::vector<int16_t>& s) {
   SD.files[tts::clipPath(0).str()] = wav(sp, s);
-  adv_audio::reset();
+  audio::reset();
   auto p = tts::play(1, [] { return false; });
   CHECK(p.end == tts::PlayEnd::Finished, "render: %s", p.error.c_str());
   return monoOut();
@@ -248,7 +248,7 @@ static void testPlayback() {
     for (int16_t v : ms) ss.insert(ss.end(), {static_cast<int16_t>(v - 1000), static_cast<int16_t>(v + 1000)});
     const auto m = render(mono, ms);
     CHECK(m.size() == ms.size() * 16000 / rate, "%u Hz: %zu frames out", rate, m.size());
-    CHECK(*std::max_element(adv_audio::writes.begin(), adv_audio::writes.end()) <= tts::kOutFrames,
+    CHECK(*std::max_element(audio::writes.begin(), audio::writes.end()) <= tts::kOutFrames,
           "%u write overflows g_out", rate);
     CHECK(!m.empty() && render(stereo, ss) == m, "%u Hz stereo plays as its L/R average", rate);
   }
@@ -258,12 +258,12 @@ static void testPlayback() {
   const auto second = render(a, tone(1000, 3000, 1600));
   SD.files[tts::clipPath(0).str()] = wav(a, tone(500, 1000, 1600));
   SD.files[tts::clipPath(1).str()] = wav(a, tone(1000, 3000, 1600));
-  adv_audio::reset();
+  audio::reset();
   auto p = tts::play(2, never);
   auto m = monoOut();
   CHECK(p.end == tts::PlayEnd::Finished && m.size() == 3200 && std::vector<int16_t>(m.begin() + 1600, m.end()) == second,
         "two clips: %zu", m.size());
-  CHECK(std::string(adv_audio::events.begin(), adv_audio::events.end()) == "udm", "finish order");
+  CHECK(std::string(audio::events.begin(), audio::events.end()) == "udme", "finish order: drained, muted, then the speaker let go");
 
   // Streamed reply with a placeholder size and an odd trailing byte plays to EOF.
   WavSpec streamed;
@@ -271,29 +271,29 @@ static void testPlayback() {
   auto bytes = wav(streamed, std::vector<int16_t>(1000, 9));
   bytes.push_back(0x55);
   SD.files[tts::clipPath(0).str()] = bytes;
-  adv_audio::reset();
+  audio::reset();
   p = tts::play(1, never);
   CHECK(p.end == tts::PlayEnd::Finished && monoOut().size() == 1000, "placeholder playback %zu", monoOut().size());
 
   // A stop mid-clip: mute before the drain, so the queued audio is never heard.
   SD.files[tts::clipPath(0).str()] = wav(a, std::vector<int16_t>(16000, 4));
   int polls = 0;
-  adv_audio::reset();
+  audio::reset();
   p = tts::play(2, [&] { return ++polls > 3; });
   CHECK(p.end == tts::PlayEnd::Stopped && monoOut().size() < 16000, "stop: %zu frames", monoOut().size());
-  CHECK(std::string(adv_audio::events.begin(), adv_audio::events.end()) == "umdm", "stop order");
+  CHECK(std::string(audio::events.begin(), audio::events.end()) == "umdme", "stop order: muted first so it is instant");
 
   // A bad second clip still leaves the speaker drained and muted, with a readable reason.
   SD.files[tts::clipPath(1).str()] = {'n', 'o', 'p', 'e'};
   SD.files[tts::clipPath(0).str()] = wav(a, std::vector<int16_t>(160, 1));
-  adv_audio::reset();
+  audio::reset();
   p = tts::play(2, never);
   CHECK(p.end == tts::PlayEnd::Failed && p.error == "reply is not a WAV file" && monoOut().size() == 160,
         "bad clip: %s", p.error.c_str());
-  CHECK(std::string(adv_audio::events.begin(), adv_audio::events.end()) == "udm", "fail order");
+  CHECK(std::string(audio::events.begin(), audio::events.end()) == "udme", "fail order");
 
   SD.files.erase(tts::clipPath(0).str());
-  adv_audio::reset();
+  audio::reset();
   p = tts::play(1, never);
   CHECK(p.end == tts::PlayEnd::Failed && p.error == "no audio on SD", "missing: %s", p.error.c_str());
 }

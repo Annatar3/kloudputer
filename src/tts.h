@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
-#include "audio_adv.h"
+#include "audio.h"
 #include "brand.h"
 #include "certs.h"
 #include "gemini.h"
@@ -299,7 +299,7 @@ inline Biquad lowPass(uint32_t rate, float hz, float q) {
   return {(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0};
 }
 
-// Mono stream from inRate to adv_audio::kRate. Downsampling low-passes at 7 kHz first (4th-order
+// Mono stream from inRate to audio::kRate. Downsampling low-passes at 7 kHz first (4th-order
 // Butterworth), so the 8-12 kHz part of a 24 kHz clip can't fold back into the speech band as grit,
 // then box-averages. Upsampling holds.
 struct Resampler {
@@ -311,10 +311,10 @@ struct Resampler {
 
   template <class Emit>
   void push(int16_t s, Emit emit) {
-    const float x = inRate > adv_audio::kRate ? aa2(aa1(s)) : s;
+    const float x = inRate > audio::kRate ? aa2(aa1(s)) : s;
     sum += x;
     ++count;
-    for (phase += adv_audio::kRate; phase >= inRate; phase -= inRate) {
+    for (phase += audio::kRate; phase >= inRate; phase -= inRate) {
       emit(count ? sum / count : x);
       sum = 0;
       count = 0;
@@ -334,7 +334,7 @@ struct Limiter {
 
 // The speaker can't play below ~400 Hz; left in, that bass only eats headroom before the limiter.
 struct Voicing {
-  Biquad lowCut = highPass(adv_audio::kRate, 400, 0.7071f);
+  Biquad lowCut = highPass(audio::kRate, 400, 0.7071f);
   Limiter limit;
 
   int16_t operator()(float s) { return limit(lowCut(s)); }
@@ -360,7 +360,7 @@ Playback playClip(const String& path, Stop stop) {
   const size_t frameBytes = 2 * w.channels;
   // Input per write, sized so its resampled output always fits g_out.
   const size_t inFrames =
-      std::min<size_t>(sizeof(g_io) / frameBytes, (kOutFrames - 1) * w.rate / adv_audio::kRate);
+      std::min<size_t>(sizeof(g_io) / frameBytes, (kOutFrames - 1) * w.rate / audio::kRate);
   Resampler rs{w.rate};
   Voicing voicing;
   size_t out = 0, played = 0;
@@ -377,7 +377,7 @@ Playback playClip(const String& path, Stop stop) {
     for (size_t i = 0; i < frames; ++i) {
       rs.push(w.channels == 2 ? (g_io[2 * i] + g_io[2 * i + 1]) / 2 : g_io[i], emit);
     }
-    if (out && !adv_audio::write(g_out, out * 4)) return {PlayEnd::Failed, "speaker write failed"};
+    if (out && !audio::write(g_out, out * 4)) return {PlayEnd::Failed, "speaker write failed"};
     played += out;
     out = 0;
     if (got < want) break;
@@ -391,12 +391,13 @@ Playback playClip(const String& path, Stop stop) {
 // Plays say0..say{clips-1} back to back. stop() is any key or G0; it cuts the sound at once.
 template <class Stop>
 Playback play(size_t clips, Stop stop) {
-  adv_audio::unmute();
+  audio::unmute();
   Playback p;
   for (size_t i = 0; i < clips && p.end == PlayEnd::Finished; ++i) p = playClip(clipPath(i), stop);
-  if (p.end == PlayEnd::Stopped) adv_audio::mute();
-  adv_audio::drain();
-  adv_audio::mute();
+  if (p.end == PlayEnd::Stopped) audio::mute();
+  audio::drain();
+  audio::mute();
+  audio::endPlayback();
   return p;
 }
 }  // namespace tts

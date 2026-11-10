@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <memory>
 #include "utility/Adafruit_TCA8418/Adafruit_TCA8418.h"
+#include "utility/Keyboard/KeyboardReader/IOMatrix.h"
 #include "utility/Keyboard/KeyboardReader/KeyboardReader.h"
 
 class PollingTCA8418Reader : public KeyboardReader {
