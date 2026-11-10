@@ -56,6 +56,7 @@ struct RequestOptions {
   String notes;  // things the user asked Claude to remember, one per line
   String system;  // replaces the whole system prompt, for one-off jobs like titling a chat
   int maxTokens = 1024;
+  bool stream = false;  // ask for server-sent events, so the text can be shown as it is written
 };
 
 inline String systemPrompt(const RequestOptions& o) {
@@ -74,6 +75,7 @@ inline String requestBody(const String& model, const std::vector<ChatMsg>& histo
   JsonDocument req;
   req["model"] = model;
   req["max_tokens"] = o.maxTokens;
+  if (o.stream) req["stream"] = true;
   req["system"] = systemPrompt(o);
   req["output_config"]["effort"] = "low";  // snappy chat; Haiku 5.5 defaults to medium
   if (wantsFallback(model)) req["fallbacks"] = "default";

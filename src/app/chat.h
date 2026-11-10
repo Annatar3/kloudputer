@@ -164,7 +164,17 @@ void sendPrompt(const String& text) {
   opts.spoken = voiceReplies || talking;
   opts.webSearch = webSearch;
   opts.notes = memory.joined();
-  const ChatResult r = anthropicChat(cfg.anthropicKey, cfg.model, history, opts);
+  // The reply is drawn while it is being written: at most a few redraws a second, the last one by addClaude below.
+  uint32_t lastDraw = 0;
+  const ChatResult r = anthropicChat(cfg.anthropicKey, cfg.model, history, opts,
+                                     [&lastDraw](claude::StreamReader::Did did, const ChatResult& soFar) {
+                                       if (did == claude::StreamReader::Did::Searching) {
+                                         view.placeholder("Searching the web...", ui::ORANGE, true);
+                                       } else if (did == claude::StreamReader::Did::Text && millis() - lastDraw > 150) {
+                                         lastDraw = millis();
+                                         view.placeholder(soFar.text, ui::TEXT, true);
+                                       }
+                                     });
   Serial.printf("[chat] <- ok=%d %ums in=%d out=%d searches=%d heap=%u err=%s\n", r.ok, r.ms, r.inTok, r.outTok,
                 r.searches, ESP.getFreeHeap(), r.error.c_str());
   if (r.searchBlocked) {

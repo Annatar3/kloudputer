@@ -37,13 +37,17 @@ struct CountedReader {
 };
 
 // "after 18234 bytes in 3.1 s; the server closed the connection; heap 41k, block 18k"
-inline String readFailure(const TlsClient& client, const CountedReader& reader) {
+inline String readFailure(const TlsClient& client, size_t bytes, uint32_t startedMs) {
   const int e = client.lastReadError;
   String why;
   if (e == 0) why = "no data came for the whole timeout";
   else if (e == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) why = "the server closed the connection";
   else if (e == MBEDTLS_ERR_SSL_CONN_EOF) why = "the connection dropped";
   else why = "tls -0x" + String(-e, HEX);
-  return "after " + String(static_cast<unsigned>(reader.bytes)) + " bytes in " + String((millis() - reader.startedMs) / 1000.0, 1) +
+  return "after " + String(static_cast<unsigned>(bytes)) + " bytes in " + String((millis() - startedMs) / 1000.0, 1) +
          " s; " + why + "; heap " + String(ESP.getFreeHeap() / 1024) + "k, block " + String(ESP.getMaxAllocHeap() / 1024) + "k";
+}
+
+inline String readFailure(const TlsClient& client, const CountedReader& reader) {
+  return readFailure(client, reader.bytes, reader.startedMs);
 }

@@ -16,6 +16,7 @@
 #include "voicepick.h"
 #include "vad.h"
 #include "talk_words.h"
+#include "claude_stream.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...)                                     \
@@ -1868,6 +1869,112 @@ static void testTalkWords() {
   }
 }
 
+// Feeds text to a stream reader in pieces of `step` characters and returns the events it reported, as letters.
+static std::string streamIn(claude::StreamReader& reader, const std::string& body, std::vector<String>* shown = nullptr, ChatResult* r = nullptr) {
+  std::string events;
+  for (char c : body) {
+    switch (reader.feed(c)) {
+      case claude::StreamReader::Did::Text: events += 'T'; if (shown && r) shown->push_back(r->text); break;
+      case claude::StreamReader::Did::Searching: events += 'S'; break;
+      case claude::StreamReader::Did::Done: events += 'D'; break;
+      case claude::StreamReader::Did::Failed: events += 'F'; break;
+      default: break;
+    }
+  }
+  return events;
+}
+
+static std::string readFixture(const char* name) {
+  const std::string path = std::string(FIXTURES) + "/" + name;
+  FILE* f = fopen(path.c_str(), "rb");
+  CHECK(f != nullptr, "fixture %s", path.c_str());
+  std::string out;
+  if (!f) return out;
+  char buf[4096];
+  for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;) out.append(buf, n);
+  fclose(f);
+  return out;
+}
+
+static void testClaudeStream() {
+  {  // a real streamed reply, captured from the API
+    ChatResult r;
+    claude::StreamReader reader(r);
+    std::vector<String> shown;
+    const std::string events = streamIn(reader, readFixture("stream-plain.sse"), &shown, &r);
+    reader.finish();
+    CHECK(events == "TTTD" && reader.done(), "three pieces of text, then done: %s", events.c_str());
+    CHECK(r.ok && r.text == "Whiskers\nMochi\nLuna", "the text joins up, got '%s'", r.text.c_str());
+    CHECK(shown.size() == 3 && shown[0] == "Wh" && shown[1] == "Whiskers\nMoch", "each piece shows the reply so far");
+    CHECK(r.inTok == 54 && r.outTok == 16 && r.searches == 0, "usage %d/%d", r.inTok, r.outTok);
+  }
+  {  // a real streamed reply with two web searches: 70 KB, with single lines over 20 KB
+    ChatResult r;
+    claude::StreamReader reader(r);
+    const std::string events = streamIn(reader, readFixture("stream-web-search.sse"));
+    reader.finish();
+    CHECK(events.rfind("SS", 0) == 0 && events.back() == 'D', "two searches announced first, done last");
+    CHECK(std::count(events.begin(), events.end(), 'T') == 83, "83 pieces of text, got %d", (int)std::count(events.begin(), events.end(), 'T'));
+    CHECK(r.ok && r.text.length() == 843 && r.text.startsWith("The latest stable Kubernetes release is") && r.text.endsWith("December 16, 2026."),
+          "all of the answer and none of the search results, got %u chars", (unsigned)r.text.length());
+    CHECK(r.text.indexOf("[part missing]") < 0 && r.text.indexOf("encrypted") < 0, "nothing was lost to a long line");
+    CHECK(r.inTok == 24093 && r.outTok == 953 && r.searches == 2, "the final usage, including what the searches added: %d/%d/%d", r.inTok, r.outTok, r.searches);
+  }
+  const std::string start = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":9}}}\n\n";
+  const auto delta = [](const char* text) { return std::string("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"") + text + "\"}}\n\n"; };
+  const auto stop = [](const char* reason) { return std::string("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"") + reason + "\"},\"usage\":{\"output_tokens\":5}}\n\ndata: {\"type\":\"message_stop\"}\n\n"; };
+  {
+    ChatResult r;
+    claude::StreamReader reader(r);
+    streamIn(reader, start + delta("Half an ans"));
+    reader.finish("after 300 bytes; the connection dropped");
+    CHECK(r.ok && r.text == "Half an ans [connection lost]", "a reply cut off mid-way keeps what arrived, got '%s'", r.text.c_str());
+  }
+  {
+    ChatResult r;
+    claude::StreamReader reader(r);
+    streamIn(reader, start);
+    reader.finish("after 90 bytes; the server closed the connection");
+    CHECK(!r.ok && r.error == "Claude's reply stopped before any text (after 90 bytes; the server closed the connection)", "nothing arrived is an error: %s", r.error.c_str());
+  }
+  {
+    ChatResult r;
+    claude::StreamReader reader(r);
+    const std::string events = streamIn(reader, start + delta("So") + "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n" + delta("more"));
+    reader.finish();
+    CHECK(events == "TFT" && reader.failed() && !r.ok && r.error == "Claude: Overloaded", "an error event fails the reply: %s", r.error.c_str());
+  }
+  {
+    ChatResult r;
+    claude::StreamReader reader(r);
+    streamIn(reader, start + delta("Long answer") + stop("max_tokens"));
+    reader.finish();
+    CHECK(r.ok && r.text == "Long answer [cut off]" && r.outTok == 5, "max_tokens is marked");
+    ChatResult refused;
+    claude::StreamReader second(refused);
+    streamIn(second, start + stop("refusal"));
+    second.finish();
+    CHECK(refused.ok && refused.text == "(Claude declined this one.)", "a refusal with no text says so");
+  }
+  {
+    ChatResult r;
+    claude::StreamReader reader(r);
+    const std::string huge = std::string("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"") + std::string(3000, 'x') + "\"}}\n\n";
+    streamIn(reader, start + delta("A") + huge + delta("B") + stop("end_turn"));
+    reader.finish();
+    CHECK(r.ok && r.text == "AB [part missing]", "text in a line too long to keep is admitted, not silently dropped: '%s'", r.text.c_str());
+  }
+  {
+    ChatResult r;
+    claude::StreamReader reader(r);
+    const std::string events = streamIn(reader, start + "data: not json\n\n: comment\n\ndata: {\"type\":\"ping\"}\n\n" +
+                                                    "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}\n\n" +
+                                                    delta("q\\\"uote\\n\\u00e9") + stop("end_turn"));
+    reader.finish();
+    CHECK(events == "TD" && r.text == "q\"uote\n\xC3\xA9", "junk, pings and thinking are ignored; escapes decode: '%s'", r.text.c_str());
+  }
+}
+
 int main() {
   testChunks();
   testPromptHistory();
@@ -1917,6 +2024,7 @@ int main() {
   testVoicePick();
   testVad();
   testTalkWords();
+  testClaudeStream();
   testTwoVoiceKeys();
   testRelay();
   testAgentForm();

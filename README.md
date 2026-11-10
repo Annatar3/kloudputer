@@ -13,6 +13,7 @@ from the speaker, and pick up saved conversations later. Everything runs on the 
 ## What it does
 
 - **Chat with Claude.** The model can be Haiku, Sonnet, Opus or Fable, switched from the menu.
+- **Replies appear as they are written.** The answer streams onto the screen instead of arriving all at once.
 - **Voice in.** Hold G0, speak, and release. The speech is transcribed by Groq's Whisper or by Google Gemini.
 - **Voice out.** Answers are read aloud, with six voices to choose from.
 - **Talk mode.** Tap G0 twice for a hands-free conversation: it listens, answers aloud, and listens again. Any key or

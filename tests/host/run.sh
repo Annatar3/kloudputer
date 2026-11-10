@@ -15,6 +15,6 @@ trap 'rm -rf "$OUT"' EXIT
 cd "$OUT"
 python3 -I "$HERE/extract.py" "$SRC"
 g++ -std=gnu++20 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -O1 -fsanitize=address,undefined \
-  -I"$OUT" -I"$HERE" -I"$SRC" -isystem "$JSON" -o test "$HERE/test.cpp" -lcrypto
+  -DFIXTURES="\"$HERE/fixtures\"" -I"$OUT" -I"$HERE" -I"$SRC" -isystem "$JSON" -o test "$HERE/test.cpp" -lcrypto
 ./test
 node "$HERE/tz_test.js" page_for_node.html
